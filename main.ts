@@ -116,12 +116,21 @@ export default class OhUtilsPlugin extends Plugin {
 				const homeNoteName = normalizePath(this.settings.homeNotePath);
 				let hasNonHomeNoteFile = false;
 				let existingHomeNoteLeaf: any = null;
+				const rootSplit = (this.app.workspace as any).rootSplit;
 				this.app.workspace.iterateAllLeaves((leaf) => {
 					const leafFile = (leaf.view as any)?.file;
-					if (!leafFile) return;
-					if (leafFile.path === homeNoteName) {
-						existingHomeNoteLeaf = leaf;
-					} else {
+					if (leafFile) {
+						if (leafFile.path === homeNoteName) {
+							existingHomeNoteLeaf = leaf;
+						} else {
+							hasNonHomeNoteFile = true;
+						}
+						return;
+					}
+					// .file 없는 뷰(그래프뷰 등)도 메인 영역에 있으면 콘텐츠로 간주한다.
+					// 사이드바 패널(파일 탐색기, 검색 등)은 rootSplit에 속하지 않아 제외된다.
+					const viewType = leaf.view?.getViewType?.();
+					if (viewType && viewType !== 'empty' && (leaf as any).getRoot() === rootSplit) {
 						hasNonHomeNoteFile = true;
 					}
 				});
