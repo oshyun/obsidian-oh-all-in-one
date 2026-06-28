@@ -2,7 +2,6 @@ import {
 	AbstractInputSuggest,
 	App,
 	debounce,
-	Menu,
 	Modal,
 	Notice,
 	Platform,
@@ -614,30 +613,6 @@ export default class OhUtilsPlugin extends Plugin {
 			this.closeMobileTabList();
 		});
 
-		// 롱프레스 메뉴 (손 떨림 취소 방지: 10px 임계값)
-		let longPressTimer: number | null = null;
-		let longPressStartX = 0;
-		let longPressStartY = 0;
-		const cancelLongPress = () => {
-			if (longPressTimer !== null) { clearTimeout(longPressTimer); longPressTimer = null; }
-		};
-		innerEl.addEventListener('touchstart', (e) => {
-			const touch = e.touches[0];
-			longPressStartX = touch.clientX;
-			longPressStartY = touch.clientY;
-			longPressTimer = window.setTimeout(() => {
-				longPressTimer = null;
-				this.showMobileTabRowMenu(leaf, file, longPressStartX, longPressStartY);
-			}, 500);
-		}, { passive: true });
-		innerEl.addEventListener('touchend', cancelLongPress);
-		innerEl.addEventListener('touchmove', (e) => {
-			const { clientX, clientY } = e.touches[0];
-			if (Math.abs(clientX - longPressStartX) > 10 || Math.abs(clientY - longPressStartY) > 10) {
-				cancelLongPress();
-			}
-		}, { passive: true });
-
 		this.attachMobileTabSwipeToDelete(rowEl, innerEl, leaf, file.path);
 		this.setupMobileTabRowDrag(rowEl, dragHandleEl, file.path);
 	}
@@ -857,33 +832,6 @@ export default class OhUtilsPlugin extends Plugin {
 				this.rebuildMobileTabListRows();
 			},
 		);
-	}
-
-	private showMobileTabRowMenu(leaf: WorkspaceLeaf, file: TFile, touchX: number, touchY: number): void {
-		const menu = new Menu();
-
-		menu.addItem(item => {
-			item
-				.setTitle('닫기')
-				.setIcon('x')
-				.onClick(() => {
-					leaf.detach();
-					if (this.mobileTabListIsOpen) this.rebuildMobileTabListRows();
-				});
-		});
-
-		menu.addItem(item => {
-			item
-				.setTitle('탐색기에서 보기')
-				.setIcon('folder-open')
-				.onClick(() => {
-					const fileExplorerPlugin = (this.app as any).internalPlugins?.getPluginById('file-explorer');
-					fileExplorerPlugin?.instance?.revealInFolder?.(file);
-					this.closeMobileTabList();
-				});
-		});
-
-		menu.showAtPosition({ x: touchX, y: touchY });
 	}
 
 	// ── 핀 정렬 패치 ─────────────────────────────────────────
