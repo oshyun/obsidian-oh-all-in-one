@@ -49,6 +49,7 @@ interface OhUtilsSettings {
 	mobileOpenInNewTabEnabled: boolean;
 	desktopOpenInNewTabEnabled: boolean;
 	mobileTabListEnabled: boolean;
+	mobileBackNavigationEnabled: boolean;
 	debugMode: boolean;
 }
 
@@ -75,6 +76,7 @@ const DEFAULT_SETTINGS: OhUtilsSettings = {
 	mobileOpenInNewTabEnabled: true,
 	desktopOpenInNewTabEnabled: false,
 	mobileTabListEnabled: true,
+	mobileBackNavigationEnabled: true,
 	debugMode: false,
 };
 
@@ -304,6 +306,7 @@ export default class OhUtilsPlugin extends Plugin {
 			this.setupPinObserver();
 			this.registerGlobalHotkeys();
 			this.setupMobileTabList();
+			this.setupAndroidBackNavigation();
 			this.registerEvent(
 				this.app.workspace.on('layout-change', () => {
 					this.refreshMobileTabList();
@@ -374,6 +377,32 @@ export default class OhUtilsPlugin extends Plugin {
 	setupMobileTabList(): void {
 		if (!this.settings.mobileTabListEnabled) return;
 		this.refreshMobileTabList();
+	}
+
+	// ── 안드로이드 뒤로가기 ─────────────────────────────────────
+
+	setupAndroidBackNavigation(): void {
+		if (!Platform.isAndroidApp) return;
+		this.registerEvent(this.app.workspace.on('file-open', (file) => {
+			if (!this.settings.mobileBackNavigationEnabled || !file) return;
+			this.log('[android-back] file-open → push history state:', file.path);
+			window.history.pushState(null, '');
+		}));
+		this.registerDomEvent(window, 'popstate', () => {
+			if (!this.settings.mobileBackNavigationEnabled) return;
+			this.log('[android-back] popstate → navigate back');
+			this.navigateBackInWorkspace();
+			window.history.pushState(null, '');
+		});
+	}
+
+	private navigateBackInWorkspace(): void {
+		const workspace = this.app.workspace as any;
+		if (typeof workspace.navigateBack === 'function') {
+			workspace.navigateBack();
+		} else {
+			(this.app as any).commands?.executeCommandById?.('app:go-back');
+		}
 	}
 
 	teardownMobileTabList(): void {
@@ -1313,6 +1342,27 @@ class OhUtilsSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 						if (value) this.plugin.setupMobileTabList();
 						else this.plugin.teardownMobileTabList();
+					})
+			);
+
+		// ── 안드로이드 뒤로가기 ─────────────────────────────
+		new Setting(containerEl).setName('안드로이드 뒤로가기').setHeading();
+		if (!Platform.isAndroidApp) {
+			containerEl.createEl('p', {
+				text: '안드로이드 앱에서만 사용 가능합니다.',
+				cls: 'oh-aio-notice-text',
+			});
+			return;
+		}
+		new Setting(containerEl)
+			.setName('활성화')
+			.setDesc('뒤로가기 버튼을 누르면 앱을 종료하는 대신 이전 파일로 이동합니다. 더 이상 이동할 파일이 없으면 앱이 종료됩니다.')
+			.addToggle(toggle =>
+				toggle
+					.setValue(this.plugin.settings.mobileBackNavigationEnabled)
+					.onChange(async (value) => {
+						this.plugin.settings.mobileBackNavigationEnabled = value;
+						await this.plugin.saveSettings();
 					})
 			);
 	}
