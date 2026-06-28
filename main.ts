@@ -202,11 +202,7 @@ export default class OhUtilsPlugin extends Plugin {
 									this.settings.tabPinnedPaths = this.addPatternLine(this.settings.tabPinnedPaths, abstractFile.path);
 								}
 								this.rebuildTabPinFilter();
-								let openLeaf: WorkspaceLeaf | null = null;
-								this.app.workspace.iterateAllLeaves(leaf => {
-									if ((leaf.view as any)?.file?.path === abstractFile.path) openLeaf = leaf as WorkspaceLeaf;
-								});
-								(openLeaf as WorkspaceLeaf | null)?.setPinned(!isTabPinned);
+								this.applyTabPinButtons();
 								await this.saveSettings();
 							});
 					});
@@ -409,7 +405,6 @@ export default class OhUtilsPlugin extends Plugin {
 					? this.removePatternLine(this.settings.tabPinnedPaths, filePath)
 					: this.addPatternLine(this.settings.tabPinnedPaths, filePath);
 				this.rebuildTabPinFilter();
-				leaf.setPinned(!currentlyPinned);
 				const newPinned = this.isTabPinned(filePath);
 				pinBtn.toggleClass('is-active', newPinned);
 				tabHeaderEl.toggleClass('oh-aio-tab-pinned', newPinned);
@@ -461,8 +456,10 @@ export default class OhUtilsPlugin extends Plugin {
 			this.log('[tab-pin] reopening closed tab:', file.path);
 			const leaf = this.app.workspace.getLeaf('tab');
 			await leaf.openFile(file);
-			leaf.setPinned(true);
-		})).finally(() => { this.reopeningTabPinnedFiles = false; });
+		})).finally(() => {
+			this.reopeningTabPinnedFiles = false;
+			this.applyTabPinButtons();
+		});
 	}
 
 	// ── 핀 정렬 패치 ─────────────────────────────────────────
