@@ -285,10 +285,6 @@
 	height: 12px;
 }
 
-.oh-aio-tab-pinned .workspace-tab-header-inner-close-button {
-	display: none;
-}
-
 .oh-aio-tab-pinned {
 	background-color: hsla(var(--accent-h), var(--accent-s), var(--accent-l), 0.2) !important;
 }

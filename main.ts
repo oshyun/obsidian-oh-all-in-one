@@ -86,10 +86,8 @@ export default class OhUtilsPlugin extends Plugin {
 	settings: OhUtilsSettings;
 	private openingHomeNote = false;
 	private sortPatcher: (() => void) | null = null;
-	private closePatcher: (() => void) | null = null;
 	private leafOpenFilePatcher: (() => void) | null = null;
-	private detachingDuplicateLeaf = false;
-	private reopeningTabPinnedFiles = false;
+	private enforcingTabPins = false;
 	private mobileTabListPanelEl: HTMLElement | null = null;
 	private mobileTabListBackdropEl: HTMLElement | null = null;
 	private mobileTabListHeaderButtonEl: HTMLElement | null = null;
@@ -343,20 +341,18 @@ export default class OhUtilsPlugin extends Plugin {
 			this.rebuildHideFilter();
 			this.rebuildTabPinFilter();
 			this.patchFileExplorerSort();
-			this.patchLeafClose();
 			this.patchLeafOpenFile();
 			this.applyPinIcons();
 			this.applyFolderActionButtons();
 			this.applyTabPinButtons();
 			this.setupPinObserver();
 			this.registerGlobalHotkeys();
-			this.reopenTabPinnedFiles();
+			this.enforceTabPins();
 			this.setupMobileTabList();
 			this.registerEvent(
 				this.app.workspace.on('layout-change', () => {
 					if (this.settings.tabPinEnabled) {
-						this.applyTabPinButtons();
-						if (!this.reopeningTabPinnedFiles) this.reopenTabPinnedFiles();
+						this.enforceTabPins();
 					}
 					this.refreshMobileTabList();
 				})
@@ -370,7 +366,6 @@ export default class OhUtilsPlugin extends Plugin {
 
 	async onunload() {
 		this.sortPatcher?.();
-		this.closePatcher?.();
 		this.leafOpenFilePatcher?.();
 		this.pinObserver?.disconnect();
 		this.clearPinDecorations();
@@ -443,38 +438,12 @@ export default class OhUtilsPlugin extends Plugin {
 		document.querySelectorAll('.oh-aio-tab-pinned').forEach(el => el.classList.remove('oh-aio-tab-pinned'));
 	}
 
-	private patchLeafClose() {
-		const plugin = this;
-		this.closePatcher = around(WorkspaceLeaf.prototype, {
-			detach(old) {
-				return function(this: WorkspaceLeaf) {
-					const filePath = (this.view as any)?.file?.path as string | undefined;
-					if (filePath && plugin.settings.tabPinEnabled && plugin.isTabPinned(filePath) && !plugin.detachingDuplicateLeaf) {
-						new Notice('탭 핀 고정 상태입니다. 핀을 해제해야 닫을 수 있습니다.', 3000);
-						return;
-					}
-					old.call(this);
-				};
-			}
-		});
-	}
-
 	private patchLeafOpenFile() {
 		const plugin = this;
 		this.leafOpenFilePatcher = around(WorkspaceLeaf.prototype, {
 			openFile(old) {
 				return async function(this: WorkspaceLeaf, file: TFile, ...args: any[]) {
 					const currentFilePath = (this.view as any)?.file?.path as string | undefined;
-					if (
-						currentFilePath &&
-						plugin.settings.tabPinEnabled &&
-						plugin.isTabPinned(currentFilePath) &&
-						file.path !== currentFilePath
-					) {
-						const newLeaf = plugin.app.workspace.getLeaf('tab');
-						return (newLeaf as any).openFile(file, ...args);
-					}
-
 					if (
 						currentFilePath &&
 						file.path !== currentFilePath &&
@@ -501,8 +470,7 @@ export default class OhUtilsPlugin extends Plugin {
 							// 현재 리프에 파일이 없는 경우(빈 새 탭)에만 닫는다.
 							// 기존 파일이 있는 리프(모바일 포함)는 닫으면 뷰가 사라지므로 남겨둔다.
 							if (!currentFilePath) {
-								plugin.detachingDuplicateLeaf = true;
-								try { this.detach(); } finally { plugin.detachingDuplicateLeaf = false; }
+								this.detach();
 							}
 							return;
 						}
@@ -514,28 +482,39 @@ export default class OhUtilsPlugin extends Plugin {
 		});
 	}
 
-	private reopenTabPinnedFiles() {
+	private enforceTabPins() {
 		if (!this.settings.tabPinEnabled || !this.tabPinFilter) return;
+		if (this.enforcingTabPins) return;
+		this.enforcingTabPins = true;
 
-		const openFilePaths = new Set<string>();
+		// 경로별 열린 leaf 목록 수집
+		const leafsByPath = new Map<string, WorkspaceLeaf[]>();
 		this.app.workspace.iterateAllLeaves(leaf => {
-			const file = (leaf.view as any)?.file;
-			if (file) openFilePaths.add(file.path);
+			const filePath = (leaf.view as any)?.file?.path as string | undefined;
+			if (!filePath) return;
+			if (!leafsByPath.has(filePath)) leafsByPath.set(filePath, []);
+			leafsByPath.get(filePath)!.push(leaf);
 		});
 
-		const pinnedFiles = this.app.vault.getMarkdownFiles().filter(file => {
-			try { return this.tabPinFilter!.ignores(file.path); } catch { return false; }
-		});
-		const missingFiles = pinnedFiles.filter(file => !openFilePaths.has(file.path));
-		if (missingFiles.length === 0) return;
+		// 중복 제거: 경로당 첫 번째 탭만 남기고 나머지를 닫는다 (모든 탭 대상)
+		for (const [filePath, leaves] of leafsByPath) {
+			if (leaves.length <= 1) continue;
+			this.log('[tab-pin] closing duplicate tabs for:', filePath, 'count:', leaves.length - 1);
+			for (let i = 1; i < leaves.length; i++) {
+				leaves[i].detach();
+			}
+		}
 
-		this.reopeningTabPinnedFiles = true;
-		Promise.all(missingFiles.map(async file => {
-			this.log('[tab-pin] reopening closed tab:', file.path);
+		// 핀 파일 중 열린 탭이 없는 것은 새 탭으로 강제 추가
+		const pinnedFiles = this.app.vault.getMarkdownFiles().filter(file => this.isTabPinned(file.path));
+		const missingPinnedFiles = pinnedFiles.filter(file => !leafsByPath.has(file.path));
+
+		Promise.all(missingPinnedFiles.map(async file => {
+			this.log('[tab-pin] adding missing pinned tab:', file.path);
 			const leaf = this.app.workspace.getLeaf('tab');
 			await leaf.openFile(file);
 		})).finally(() => {
-			this.reopeningTabPinnedFiles = false;
+			this.enforcingTabPins = false;
 			this.applyTabPinButtons();
 		});
 	}
