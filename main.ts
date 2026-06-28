@@ -34,6 +34,7 @@ interface OhUtilsSettings {
 	folderActionsShowCollapseAll: boolean;
 	folderActionsShowPin: boolean;
 	folderActionsShowDelete: boolean;
+	folderActionsShowCopyPath: boolean;
 	pinEnabled: boolean;
 	pinnedPatterns: string;
 	hideEnabled: boolean;
@@ -55,6 +56,7 @@ const DEFAULT_SETTINGS: OhUtilsSettings = {
 	folderActionsShowCollapseAll: true,
 	folderActionsShowPin: true,
 	folderActionsShowDelete: false,
+	folderActionsShowCopyPath: true,
 	pinEnabled: true,
 	pinnedPatterns: '',
 	hideEnabled: false,
@@ -507,6 +509,7 @@ export default class OhUtilsPlugin extends Plugin {
 			folderActionsShowCollapseAll,
 			folderActionsShowPin,
 			folderActionsShowDelete,
+			folderActionsShowCopyPath,
 			pinEnabled,
 		} = this.settings;
 		const showPin = folderActionsShowPin && pinEnabled;
@@ -521,7 +524,7 @@ export default class OhUtilsPlugin extends Plugin {
 
 			// 버튼 표시 여부 판단
 			const hasFolderSpecificButtons = isFolder && (folderActionsShowNewFile || folderActionsShowExpandAll || folderActionsShowCollapseAll);
-			const hasSharedButtons = showPin || showDelete;
+			const hasSharedButtons = showPin || showDelete || folderActionsShowCopyPath;
 			if (!hasFolderSpecificButtons && !hasSharedButtons) continue;
 
 			const titleEl = item.el.firstChild as HTMLElement | null;
@@ -609,6 +612,20 @@ export default class OhUtilsPlugin extends Plugin {
 					const confirmed = confirm(`"${name}"을(를) 삭제할까요?`);
 					if (!confirmed) return;
 					await (this.app as any).fileManager.trashFile(item.file);
+				});
+			}
+
+			if (folderActionsShowCopyPath) {
+				const btn = actionsEl.createEl('button', {
+					cls: 'oh-utils-item-action-btn',
+					attr: { 'aria-label': '경로 복사' },
+				});
+				setIcon(btn, 'copy');
+				btn.addEventListener('click', async (e) => {
+					e.stopPropagation();
+					e.preventDefault();
+					await navigator.clipboard.writeText(item.file.path);
+					new Notice('경로 복사됨');
 				});
 			}
 
@@ -1144,6 +1161,18 @@ class OhUtilsSettingTab extends PluginSettingTab {
 						.setValue(this.plugin.settings.folderActionsShowDelete)
 						.onChange(async (value) => {
 							this.plugin.settings.folderActionsShowDelete = value;
+							await this.plugin.saveSettings();
+							this.plugin.refreshFolderActionButtons();
+						})
+				);
+			new Setting(containerEl)
+				.setName('경로 복사')
+				.setDesc('파일과 폴더 모두에 표시됩니다. vault 기준 상대 경로를 클립보드에 복사합니다.')
+				.addToggle(toggle =>
+					toggle
+						.setValue(this.plugin.settings.folderActionsShowCopyPath)
+						.onChange(async (value) => {
+							this.plugin.settings.folderActionsShowCopyPath = value;
 							await this.plugin.saveSettings();
 							this.plugin.refreshFolderActionButtons();
 						})
