@@ -592,14 +592,14 @@ export default class OhUtilsPlugin extends Plugin {
 		pinButtonEl.addEventListener('click', (e) => {
 			e.stopPropagation();
 			if (isPinnedFile) {
-				this.settings.pinnedPatterns = this.removePatternLine(this.settings.pinnedPatterns, file.path);
+				this.unpinFile(file.path);
 			} else {
 				this.settings.pinnedPatterns = this.addPatternLine(this.settings.pinnedPatterns, file.path);
+				this.rebuildPinFilter();
+				this.requestSort();
+				this.saveSettings();
+				this.rebuildMobileTabListRows();
 			}
-			this.rebuildPinFilter();
-			this.requestSort();
-			this.saveSettings();
-			this.rebuildMobileTabListRows();
 		});
 
 		// 드래그 핸들
@@ -643,7 +643,7 @@ export default class OhUtilsPlugin extends Plugin {
 	}
 
 	private buildMobileTabPinnedClosedRow(containerEl: HTMLElement, file: TFile): void {
-		const rowEl = createEl('div', { cls: 'oh-aio-mobile-tab-row' });
+		const rowEl = createEl('div', { cls: 'oh-aio-mobile-tab-row is-pinned-closed' });
 		const innerEl = rowEl.createEl('div', { cls: 'oh-aio-mobile-tab-row-inner' });
 
 		const pinIconEl = innerEl.createEl('span', { cls: 'oh-aio-mobile-tab-row-pin' });
@@ -651,12 +651,44 @@ export default class OhUtilsPlugin extends Plugin {
 
 		this.buildMobileTabFileText(innerEl, file);
 
+		const unpinButtonEl = innerEl.createEl('div', { cls: 'oh-aio-mobile-tab-row-pin-btn clickable-icon' });
+		setIcon(unpinButtonEl, 'pin-off');
+		unpinButtonEl.setAttribute('aria-label', '핀 해제');
+		unpinButtonEl.addEventListener('click', (e) => {
+			e.stopPropagation();
+			this.unpinFile(file.path);
+		});
+
+		const dragHandleEl = innerEl.createEl('div', { cls: 'oh-aio-mobile-tab-row-drag-handle' });
+		setIcon(dragHandleEl, 'grip-vertical');
+
 		containerEl.appendChild(rowEl);
 
 		innerEl.addEventListener('click', () => {
 			this.app.workspace.getLeaf(false).openFile(file);
 			this.closeMobileTabList();
 		});
+
+		this.setupMobileTabPinnedClosedRowDrag(rowEl, dragHandleEl, file.path);
+	}
+
+	private setupMobileTabPinnedClosedRowDrag(rowEl: HTMLElement, dragHandleEl: HTMLElement, filePath: string): void {
+		this.setupMobileTabRowDragBase(
+			rowEl,
+			dragHandleEl,
+			'.oh-aio-mobile-tab-row.is-pinned-closed:not(.is-dragging)',
+			(targetIndex) => {
+				const lines = this.settings.pinnedPatterns.split('\n').filter(l => l.trim());
+				const currentIndex = lines.indexOf(filePath);
+				if (currentIndex !== -1) {
+					lines.splice(currentIndex, 1);
+					lines.splice(targetIndex, 0, filePath);
+					this.settings.pinnedPatterns = lines.join('\n');
+					this.saveSettings();
+					this.rebuildMobileTabListRows();
+				}
+			},
+		);
 	}
 
 	private buildMobileTabFileText(innerEl: HTMLElement, file: TFile): void {
@@ -730,7 +762,12 @@ export default class OhUtilsPlugin extends Plugin {
 		return sorted;
 	}
 
-	private setupMobileTabRowDrag(rowEl: HTMLElement, dragHandleEl: HTMLElement, filePath: string): void {
+	private setupMobileTabRowDragBase(
+		rowEl: HTMLElement,
+		dragHandleEl: HTMLElement,
+		draggableRowSelector: string,
+		onDrop: (targetIndex: number) => void,
+	): void {
 		const panelEl = this.mobileTabListPanelEl;
 		if (!panelEl) return;
 
@@ -754,7 +791,7 @@ export default class OhUtilsPlugin extends Plugin {
 
 			// touchmove마다 DOM 쿼리·레이아웃 flush를 막기 위해 touchstart 시점에 스냅샷
 			const draggableRows = Array.from(
-				panelEl.querySelectorAll('.oh-aio-mobile-tab-row[data-file-path]:not(.is-dragging)')
+				panelEl.querySelectorAll(draggableRowSelector)
 			) as HTMLElement[];
 			const panelRect = panelEl.getBoundingClientRect();
 			const rowSnapshots = draggableRows.map(r => {
@@ -800,17 +837,26 @@ export default class OhUtilsPlugin extends Plugin {
 				document.removeEventListener('touchmove', onMove);
 				document.removeEventListener('touchend', onEnd);
 
-				if (targetIndex >= 0) {
-					const newOrder = this.mobileTabListLeafOrder.filter(p => p !== filePath);
-					newOrder.splice(targetIndex, 0, filePath);
-					this.mobileTabListLeafOrder = newOrder;
-					this.rebuildMobileTabListRows();
-				}
+				if (targetIndex >= 0) onDrop(targetIndex);
 			};
 
 			document.addEventListener('touchmove', onMove, { passive: true });
 			document.addEventListener('touchend', onEnd);
 		}, { passive: true });
+	}
+
+	private setupMobileTabRowDrag(rowEl: HTMLElement, dragHandleEl: HTMLElement, filePath: string): void {
+		this.setupMobileTabRowDragBase(
+			rowEl,
+			dragHandleEl,
+			'.oh-aio-mobile-tab-row[data-file-path]:not(.is-dragging)',
+			(targetIndex) => {
+				const newOrder = this.mobileTabListLeafOrder.filter(p => p !== filePath);
+				newOrder.splice(targetIndex, 0, filePath);
+				this.mobileTabListLeafOrder = newOrder;
+				this.rebuildMobileTabListRows();
+			},
+		);
 	}
 
 	private showMobileTabRowMenu(leaf: WorkspaceLeaf, file: TFile, touchX: number, touchY: number): void {
@@ -925,6 +971,14 @@ export default class OhUtilsPlugin extends Plugin {
 
 	private removePatternLine(patterns: string, line: string): string {
 		return patterns.split('\n').filter(l => l.trim() !== line).join('\n');
+	}
+
+	private unpinFile(filePath: string): void {
+		this.settings.pinnedPatterns = this.removePatternLine(this.settings.pinnedPatterns, filePath);
+		this.rebuildPinFilter();
+		this.requestSort();
+		this.saveSettings();
+		this.rebuildMobileTabListRows();
 	}
 
 	private renamePatternLine(patterns: string, oldLine: string, newLine: string): string {
