@@ -379,7 +379,7 @@ export default class OhUtilsPlugin extends Plugin {
 		this.app.workspace.iterateAllLeaves(leaf => {
 			const tabHeaderEl = (leaf as any).tabHeaderEl as HTMLElement | undefined;
 			if (!tabHeaderEl) return;
-			if (tabHeaderEl.querySelector('.oh-utils-tab-pin-btn')) return;
+			if (tabHeaderEl.querySelector('.oh-aio-tab-pin-btn')) return;
 
 			const filePath = (leaf.view as any)?.file?.path as string | undefined;
 			if (!filePath) return;
@@ -387,7 +387,7 @@ export default class OhUtilsPlugin extends Plugin {
 			const closeBtn = tabHeaderEl.querySelector('.workspace-tab-header-inner-close-button');
 			if (!closeBtn) return;
 
-			const pinBtn = createEl('div', { cls: 'oh-utils-tab-pin-btn clickable-icon' });
+			const pinBtn = createEl('div', { cls: 'oh-aio-tab-pin-btn clickable-icon' });
 			pinBtn.toggleClass('is-active', this.isTabPinned(filePath));
 			setIcon(pinBtn, 'pin');
 
@@ -408,7 +408,7 @@ export default class OhUtilsPlugin extends Plugin {
 	}
 
 	clearTabPinButtons() {
-		document.querySelectorAll('.oh-utils-tab-pin-btn').forEach(el => el.remove());
+		document.querySelectorAll('.oh-aio-tab-pin-btn').forEach(el => el.remove());
 	}
 
 	private reopenTabPinnedFiles() {
