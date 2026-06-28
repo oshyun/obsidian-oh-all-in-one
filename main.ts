@@ -1300,41 +1300,6 @@ class OhUtilsSettingTab extends PluginSettingTab {
 					})
 			);
 
-		// ── 탭 핀 ──────────────────────────────────────────────
-		new Setting(containerEl).setName('탭 핀').setHeading();
-		new Setting(containerEl)
-			.setName('활성화')
-			.setDesc('탭 핀 고정된 파일은 탭을 닫아도 자동으로 다시 열립니다. 파일을 우클릭하거나 탭 핀 버튼으로 설정할 수 있습니다.')
-			.addToggle(toggle =>
-				toggle
-					.setValue(this.plugin.settings.tabPinEnabled)
-					.onChange(async (value) => {
-						this.plugin.settings.tabPinEnabled = value;
-						if (value) {
-							this.plugin.applyTabPinButtons();
-						} else {
-							this.plugin.clearTabPinButtons();
-						}
-						await this.plugin.saveSettings();
-					})
-			);
-		new Setting(containerEl)
-			.setName('탭 핀 패턴')
-			.setDesc('.gitignore 형식. 한 줄에 하나씩. 예: Notes/Home.md, Daily/*.md')
-			.addTextArea(text => {
-				text
-					.setPlaceholder('Notes/Home.md\nDaily/*.md')
-					.setValue(this.plugin.settings.tabPinnedPaths)
-					.onChange(async (value) => {
-						this.plugin.settings.tabPinnedPaths = value;
-						await this.plugin.saveSettings();
-						this.plugin.rebuildTabPinFilter();
-					});
-				text.inputEl.rows = 6;
-				text.inputEl.style.width = '100%';
-				text.inputEl.style.fontFamily = 'var(--font-monospace)';
-			});
-
 		// ── 모바일 탭 목록 ───────────────────────────────────
 		new Setting(containerEl).setName('모바일 탭 목록').setHeading();
 		new Setting(containerEl)
