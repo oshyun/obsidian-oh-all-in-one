@@ -321,6 +321,16 @@ export default class OhUtilsPlugin extends Plugin {
 			this.registerEvent(this.app.workspace.on('active-leaf-change', () => this.refreshMobileTabList()));
 		});
 
+		this.addCommand({
+			id: 'toggle-mobile-tab-list',
+			name: '모바일 탭 목록 열기/닫기',
+			checkCallback: (checking: boolean) => {
+				if (!Platform.isMobile || !this.settings.mobileTabListEnabled || !this.mobileTabListHeaderButtonEl) return false;
+				if (!checking) this.toggleMobileTabList();
+				return true;
+			},
+		});
+
 		this.addSettingTab(new OhUtilsSettingTab(this.app, this));
 	}
 
@@ -476,6 +486,9 @@ export default class OhUtilsPlugin extends Plugin {
 			this.mobileTabListPanelEl = panelEl;
 		}
 
+		const buttonBottom = this.mobileTabListHeaderButtonEl.getBoundingClientRect().bottom;
+		this.mobileTabListPanelEl.style.top = buttonBottom + 'px';
+
 		this.rebuildMobileTabListRows();
 		this.mobileTabListIsOpen = true;
 		this.mobileTabListPanelEl.addClass('is-open');
@@ -492,6 +505,9 @@ export default class OhUtilsPlugin extends Plugin {
 
 	private rebuildMobileTabListRows(): void {
 		if (!this.mobileTabListPanelEl) return;
+		if (this.mobileTabListHeaderButtonEl) {
+			this.mobileTabListPanelEl.style.top = this.mobileTabListHeaderButtonEl.getBoundingClientRect().bottom + 'px';
+		}
 		this.mobileTabListPanelEl.empty();
 
 		const activeFile = this.app.workspace.getActiveFile();
