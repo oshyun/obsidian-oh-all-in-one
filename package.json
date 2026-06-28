@@ -1,6 +1,6 @@
 {
 	"name": "obsidian-oh-all-in-one",
-	"version": "0.0.52",
+	"version": "0.0.53",
 	"description": "Utility features for Obsidian by oshyun.",
 	"main": "main.js",
 	"scripts": {
