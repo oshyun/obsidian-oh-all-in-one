@@ -1,0 +1,131 @@
+.oh-utils-pin-icon {
+	display: inline-flex;
+	align-items: center;
+	align-self: center;
+	margin-right: 0.2em;
+	color: hsl(var(--accent-h), var(--accent-s), var(--accent-l));
+	opacity: 0.7;
+	flex-shrink: 0;
+}
+
+.oh-utils-pin-icon svg {
+	width: 14px;
+	height: 14px;
+}
+
+/* pinned 항목과 일반 항목 사이 구분선 */
+.oh-utils-pinned + .nav-folder:not(.oh-utils-pinned),
+.oh-utils-pinned + .nav-file:not(.oh-utils-pinned) {
+	border-top: 1px solid var(--background-modifier-border);
+	margin-top: 2px;
+	padding-top: 2px;
+}
+
+/* ── 글로벌 핫키 설정 목록 ── */
+.oh-utils-hotkey-list {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin-bottom: 12px;
+}
+
+.oh-utils-hotkey-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 6px 10px;
+	background: var(--background-secondary);
+	border-radius: 6px;
+}
+
+.oh-utils-key-badge {
+	font-family: var(--font-monospace);
+	font-size: 0.85em;
+	background: var(--background-modifier-border);
+	border: 1px solid var(--background-modifier-border-hover);
+	border-radius: 4px;
+	padding: 2px 7px;
+	white-space: nowrap;
+	flex-shrink: 0;
+}
+
+.oh-utils-hotkey-command {
+	flex: 1;
+	font-size: 0.9em;
+	color: var(--text-muted);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.oh-utils-hotkey-delete {
+	font-size: 0.8em;
+	padding: 2px 8px;
+	flex-shrink: 0;
+	cursor: pointer;
+}
+
+.oh-utils-notice-text {
+	color: var(--text-muted);
+	font-size: 0.9em;
+}
+
+/* ── 글로벌 핫키 모달 ── */
+.oh-utils-hotkey-modal h2 {
+	margin-bottom: 16px;
+}
+
+.oh-utils-modal-label {
+	font-size: 0.85em;
+	font-weight: 600;
+	color: var(--text-muted);
+	margin: 12px 0 6px;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+
+.oh-utils-key-recorder {
+	width: 100%;
+	padding: 14px;
+	font-size: 1.1em;
+	font-family: var(--font-monospace);
+	text-align: center;
+	background: var(--background-secondary);
+	border: 2px dashed var(--background-modifier-border);
+	border-radius: 8px;
+	cursor: pointer;
+	transition: border-color 0.15s, background 0.15s;
+}
+
+.oh-utils-key-recorder:hover {
+	border-color: var(--interactive-accent);
+}
+
+.oh-utils-key-recorder.is-recording {
+	border-color: var(--interactive-accent);
+	background: var(--background-modifier-hover);
+	color: var(--interactive-accent);
+	animation: oh-pulse 1s ease-in-out infinite;
+}
+
+@keyframes oh-pulse {
+	0%, 100% { opacity: 1; }
+	50% { opacity: 0.6; }
+}
+
+.oh-utils-command-input {
+	width: 100%;
+	padding: 8px 12px;
+	font-size: 0.95em;
+	background: var(--background-secondary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	color: var(--text-normal);
+}
+
+.oh-utils-modal-buttons {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+	margin-top: 20px;
+}

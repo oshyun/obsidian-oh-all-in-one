@@ -1,0 +1,10 @@
+{
+	"id": "oh-utils",
+	"name": "0h-Utils",
+	"version": "0.0.10",
+	"minAppVersion": "0.15.0",
+	"description": "Utility features for Obsidian by oshyun.",
+	"author": "oshyun",
+	"authorUrl": "https://github.com/oshyun/obsidian-oh-all-in-one",
+	"isDesktopOnly": false
+}
