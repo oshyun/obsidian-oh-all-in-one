@@ -90,6 +90,7 @@ export default class OhUtilsPlugin extends Plugin {
 	private mobileTabListHeaderButtonEl: HTMLElement | null = null;
 	private mobileTabListIsOpen = false;
 	private mobileTabListAttachedToContainerEl: HTMLElement | null = null;
+	private mobileTabListLeafOrder: string[] = [];
 	private pinObserver: MutationObserver | null = null;
 	private debouncedApplyExplorer = debounce(() => { this.applyPinIcons(); this.applyFolderActionButtons(); }, 50, true);
 	private pinFilter: Ignore | null = null;
@@ -547,7 +548,8 @@ export default class OhUtilsPlugin extends Plugin {
 			return;
 		}
 
-		for (const openLeaf of openLeaves) {
+		const sortedLeaves = this.applyMobileTabLeafOrder(openLeaves);
+		for (const openLeaf of sortedLeaves) {
 			const file = (openLeaf.view as any).file as TFile;
 			const isActive = file.path === activeFile?.path;
 			const isFilePinned = pinnedPathSet.has(file.path);
@@ -567,6 +569,7 @@ export default class OhUtilsPlugin extends Plugin {
 		isPinnedFile: boolean,
 	): void {
 		const rowEl = createEl('div', { cls: 'oh-aio-mobile-tab-row' });
+		rowEl.dataset.filePath = file.path;
 		if (isActive) rowEl.addClass('is-active');
 
 		const deleteBackgroundEl = rowEl.createEl('div', { cls: 'oh-aio-mobile-tab-row-delete-bg' });
@@ -582,6 +585,27 @@ export default class OhUtilsPlugin extends Plugin {
 
 		this.buildMobileTabFileText(innerEl, file);
 
+		// 핀 토글 버튼
+		const pinButtonEl = innerEl.createEl('div', { cls: 'oh-aio-mobile-tab-row-pin-btn clickable-icon' });
+		setIcon(pinButtonEl, isPinnedFile ? 'pin-off' : 'pin');
+		pinButtonEl.setAttribute('aria-label', isPinnedFile ? '핀 해제' : '핀 고정');
+		pinButtonEl.addEventListener('click', (e) => {
+			e.stopPropagation();
+			if (isPinnedFile) {
+				this.settings.pinnedPatterns = this.removePatternLine(this.settings.pinnedPatterns, file.path);
+			} else {
+				this.settings.pinnedPatterns = this.addPatternLine(this.settings.pinnedPatterns, file.path);
+			}
+			this.rebuildPinFilter();
+			this.requestSort();
+			this.saveSettings();
+			this.rebuildMobileTabListRows();
+		});
+
+		// 드래그 핸들
+		const dragHandleEl = innerEl.createEl('div', { cls: 'oh-aio-mobile-tab-row-drag-handle' });
+		setIcon(dragHandleEl, 'grip-vertical');
+
 		containerEl.appendChild(rowEl);
 
 		// 탭 전환
@@ -590,22 +614,32 @@ export default class OhUtilsPlugin extends Plugin {
 			this.closeMobileTabList();
 		});
 
-		// 롱프레스 메뉴
+		// 롱프레스 메뉴 (손 떨림 취소 방지: 10px 임계값)
 		let longPressTimer: number | null = null;
+		let longPressStartX = 0;
+		let longPressStartY = 0;
 		const cancelLongPress = () => {
 			if (longPressTimer !== null) { clearTimeout(longPressTimer); longPressTimer = null; }
 		};
 		innerEl.addEventListener('touchstart', (e) => {
-			const { clientX, clientY } = e.touches[0];
+			const touch = e.touches[0];
+			longPressStartX = touch.clientX;
+			longPressStartY = touch.clientY;
 			longPressTimer = window.setTimeout(() => {
 				longPressTimer = null;
-				this.showMobileTabRowMenu(leaf, file, clientX, clientY);
+				this.showMobileTabRowMenu(leaf, file, longPressStartX, longPressStartY);
 			}, 500);
 		}, { passive: true });
 		innerEl.addEventListener('touchend', cancelLongPress);
-		innerEl.addEventListener('touchmove', cancelLongPress, { passive: true });
+		innerEl.addEventListener('touchmove', (e) => {
+			const { clientX, clientY } = e.touches[0];
+			if (Math.abs(clientX - longPressStartX) > 10 || Math.abs(clientY - longPressStartY) > 10) {
+				cancelLongPress();
+			}
+		}, { passive: true });
 
 		this.attachMobileTabSwipeToDelete(rowEl, innerEl, leaf, file.path);
+		this.setupMobileTabRowDrag(rowEl, dragHandleEl, file.path);
 	}
 
 	private buildMobileTabPinnedClosedRow(containerEl: HTMLElement, file: TFile): void {
@@ -679,6 +713,104 @@ export default class OhUtilsPlugin extends Plugin {
 				innerEl.style.transform = '';
 			}
 		});
+	}
+
+	private applyMobileTabLeafOrder(leaves: WorkspaceLeaf[]): WorkspaceLeaf[] {
+		if (this.mobileTabListLeafOrder.length === 0) {
+			this.mobileTabListLeafOrder = leaves.map(l => (l.view as any)?.file?.path as string).filter(Boolean);
+			return leaves;
+		}
+		const orderMap = new Map(this.mobileTabListLeafOrder.map((p, i) => [p, i]));
+		const sorted = [...leaves].sort((a, b) => {
+			const ap = (a.view as any)?.file?.path ?? '';
+			const bp = (b.view as any)?.file?.path ?? '';
+			return (orderMap.has(ap) ? orderMap.get(ap)! : Infinity) - (orderMap.has(bp) ? orderMap.get(bp)! : Infinity);
+		});
+		this.mobileTabListLeafOrder = sorted.map(l => (l.view as any)?.file?.path as string).filter(Boolean);
+		return sorted;
+	}
+
+	private setupMobileTabRowDrag(rowEl: HTMLElement, dragHandleEl: HTMLElement, filePath: string): void {
+		const panelEl = this.mobileTabListPanelEl;
+		if (!panelEl) return;
+
+		dragHandleEl.addEventListener('touchstart', (e) => {
+			e.stopPropagation();
+
+			const startY = e.touches[0].clientY;
+			const rect = rowEl.getBoundingClientRect();
+
+			const cloneEl = rowEl.cloneNode(true) as HTMLElement;
+			cloneEl.classList.add('oh-aio-mobile-tab-row-drag-clone');
+			cloneEl.style.top = rect.top + 'px';
+			cloneEl.style.left = rect.left + 'px';
+			cloneEl.style.width = rect.width + 'px';
+			document.body.appendChild(cloneEl);
+
+			rowEl.classList.add('is-dragging');
+
+			const indicatorEl = createEl('div', { cls: 'oh-aio-mobile-tab-drop-indicator' });
+			panelEl.appendChild(indicatorEl);
+
+			// touchmove마다 DOM 쿼리·레이아웃 flush를 막기 위해 touchstart 시점에 스냅샷
+			const draggableRows = Array.from(
+				panelEl.querySelectorAll('.oh-aio-mobile-tab-row[data-file-path]:not(.is-dragging)')
+			) as HTMLElement[];
+			const panelRect = panelEl.getBoundingClientRect();
+			const rowSnapshots = draggableRows.map(r => {
+				const rRect = r.getBoundingClientRect();
+				return {
+					midY: rRect.top + rRect.height / 2,
+					topOffset: rRect.top - panelRect.top + panelEl.scrollTop,
+					bottomOffset: rRect.bottom - panelRect.top + panelEl.scrollTop,
+				};
+			});
+
+			let targetIndex = -1;
+
+			const onMove = (ev: TouchEvent) => {
+				const touchY = ev.touches[0].clientY;
+				cloneEl.style.transform = `translateY(${touchY - startY}px)`;
+
+				targetIndex = rowSnapshots.length;
+				let indicatorTop = -1;
+
+				for (let i = 0; i < rowSnapshots.length; i++) {
+					if (touchY < rowSnapshots[i].midY) {
+						targetIndex = i;
+						indicatorTop = rowSnapshots[i].topOffset;
+						break;
+					}
+					if (i === rowSnapshots.length - 1) {
+						indicatorTop = rowSnapshots[i].bottomOffset;
+					}
+				}
+
+				if (indicatorTop >= 0) {
+					indicatorEl.style.top = indicatorTop + 'px';
+					indicatorEl.style.display = 'block';
+				}
+			};
+
+			const onEnd = () => {
+				cloneEl.remove();
+				indicatorEl.remove();
+				rowEl.classList.remove('is-dragging');
+
+				document.removeEventListener('touchmove', onMove);
+				document.removeEventListener('touchend', onEnd);
+
+				if (targetIndex >= 0) {
+					const newOrder = this.mobileTabListLeafOrder.filter(p => p !== filePath);
+					newOrder.splice(targetIndex, 0, filePath);
+					this.mobileTabListLeafOrder = newOrder;
+					this.rebuildMobileTabListRows();
+				}
+			};
+
+			document.addEventListener('touchmove', onMove, { passive: true });
+			document.addEventListener('touchend', onEnd);
+		}, { passive: true });
 	}
 
 	private showMobileTabRowMenu(leaf: WorkspaceLeaf, file: TFile, touchX: number, touchY: number): void {
