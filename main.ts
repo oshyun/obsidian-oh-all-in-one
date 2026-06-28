@@ -1127,17 +1127,19 @@ class OhUtilsSettingTab extends PluginSettingTab {
 		this.renderTabsContent(containerEl);
 	}
 
-	private renderTabsContent(containerEl: HTMLElement): void {
-		// ── 탭 바 ────────────────────────────────────────────
-		const tabBar = containerEl.createDiv({ cls: 'oh-aio-tab-bar' });
-		const tabs: { id: SettingsTab; label: string }[] = [
-			{ id: 'general', label: '일반' },
-			{ id: 'note', label: '노트' },
-			{ id: 'tab', label: '탭' },
-			{ id: 'fileExplorer', label: '파일 탐색기' },
-			{ id: 'globalHotkeys', label: '글로벌 핫키' },
+	private get tabDefinitions(): { id: SettingsTab; label: string; render: (el: HTMLElement) => void }[] {
+		return [
+			{ id: 'general',       label: '일반',       render: el => this.renderGeneral(el) },
+			{ id: 'note',          label: '노트',        render: el => this.renderNote(el) },
+			{ id: 'tab',           label: '탭',          render: el => this.renderTab(el) },
+			{ id: 'fileExplorer',  label: '파일 탐색기', render: el => this.renderFileExplorer(el) },
+			{ id: 'globalHotkeys', label: '글로벌 핫키', render: el => this.renderGlobalHotkeys(el) },
 		];
-		for (const tab of tabs) {
+	}
+
+	private renderTabsContent(containerEl: HTMLElement): void {
+		const tabBar = containerEl.createDiv({ cls: 'oh-aio-tab-bar' });
+		for (const tab of this.tabDefinitions) {
 			const btn = tabBar.createEl('button', {
 				text: tab.label,
 				cls: 'oh-aio-tab-btn' + (this.activeTab === tab.id ? ' is-active' : ''),
@@ -1147,27 +1149,14 @@ class OhUtilsSettingTab extends PluginSettingTab {
 				this.display();
 			});
 		}
-
-		if (this.activeTab === 'general') {
-			this.renderGeneral(containerEl);
-		} else if (this.activeTab === 'note') {
-			this.renderNote(containerEl);
-		} else if (this.activeTab === 'tab') {
-			this.renderTab(containerEl);
-		} else if (this.activeTab === 'fileExplorer') {
-			this.renderFileExplorer(containerEl);
-		} else if (this.activeTab === 'globalHotkeys') {
-			this.renderGlobalHotkeys(containerEl);
-		}
+		this.tabDefinitions.find(t => t.id === this.activeTab)?.render(containerEl);
 	}
 
 	private renderSearchResults(containerEl: HTMLElement, query: string): void {
 		const tempEl = createDiv();
-		this.renderGeneral(tempEl);
-		this.renderNote(tempEl);
-		this.renderTab(tempEl);
-		this.renderFileExplorer(tempEl);
-		this.renderGlobalHotkeys(tempEl);
+		for (const tab of this.tabDefinitions) {
+			tab.render(tempEl);
+		}
 
 		let currentHeadingEl: HTMLElement | null = null;
 		let lastAppendedHeadingEl: HTMLElement | null = null;
