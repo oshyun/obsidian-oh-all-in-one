@@ -476,12 +476,6 @@ export default class OhUtilsPlugin extends Plugin {
 			this.mobileTabListPanelEl = panelEl;
 		}
 
-		const headerEl = this.mobileTabListHeaderButtonEl.closest('.view-header') as HTMLElement | null;
-		if (headerEl) {
-			const headerRect = headerEl.getBoundingClientRect();
-			this.mobileTabListPanelEl.style.top = headerRect.bottom + 'px';
-		}
-
 		this.rebuildMobileTabListRows();
 		this.mobileTabListIsOpen = true;
 		this.mobileTabListPanelEl.addClass('is-open');
@@ -504,16 +498,32 @@ export default class OhUtilsPlugin extends Plugin {
 		const rootSplit = (this.app.workspace as any).rootSplit;
 
 		const openLeaves: WorkspaceLeaf[] = [];
-		const seenPaths = new Set<string>();
+		const openPaths = new Set<string>();
 		this.app.workspace.iterateAllLeaves(leaf => {
 			if (rootSplit && (leaf as any).getRoot?.() !== rootSplit) return;
 			const file = (leaf.view as any)?.file as TFile | undefined;
-			if (!file || seenPaths.has(file.path)) return;
-			seenPaths.add(file.path);
+			if (!file || openPaths.has(file.path)) return;
+			openPaths.add(file.path);
 			openLeaves.push(leaf);
 		});
 
-		if (openLeaves.length === 0) {
+		const pinnedPathSet = new Set<string>();
+		if (this.settings.pinEnabled) {
+			for (const line of this.settings.pinnedPatterns.split('\n')) {
+				const trimmed = line.trim();
+				if (trimmed) pinnedPathSet.add(trimmed);
+			}
+		}
+
+		const pinnedClosedFiles: TFile[] = [];
+		for (const pinnedPath of pinnedPathSet) {
+			if (!openPaths.has(pinnedPath)) {
+				const file = this.app.vault.getFileByPath(pinnedPath);
+				if (file) pinnedClosedFiles.push(file);
+			}
+		}
+
+		if (openLeaves.length === 0 && pinnedClosedFiles.length === 0) {
 			this.mobileTabListPanelEl.createEl('div', {
 				cls: 'oh-aio-mobile-tab-empty',
 				text: '열린 탭이 없습니다.',
@@ -524,7 +534,12 @@ export default class OhUtilsPlugin extends Plugin {
 		for (const openLeaf of openLeaves) {
 			const file = (openLeaf.view as any).file as TFile;
 			const isActive = file.path === activeFile?.path;
-			this.buildMobileTabRow(this.mobileTabListPanelEl, openLeaf, file, isActive);
+			const isFilePinned = pinnedPathSet.has(file.path);
+			this.buildMobileTabRow(this.mobileTabListPanelEl, openLeaf, file, isActive, isFilePinned);
+		}
+
+		for (const file of pinnedClosedFiles) {
+			this.buildMobileTabPinnedClosedRow(this.mobileTabListPanelEl, file);
 		}
 	}
 
@@ -533,6 +548,7 @@ export default class OhUtilsPlugin extends Plugin {
 		leaf: WorkspaceLeaf,
 		file: TFile,
 		isActive: boolean,
+		isPinnedFile: boolean,
 	): void {
 		const rowEl = createEl('div', { cls: 'oh-aio-mobile-tab-row' });
 		if (isActive) rowEl.addClass('is-active');
@@ -543,12 +559,12 @@ export default class OhUtilsPlugin extends Plugin {
 
 		const innerEl = rowEl.createEl('div', { cls: 'oh-aio-mobile-tab-row-inner' });
 
-		const textEl = innerEl.createEl('div', { cls: 'oh-aio-mobile-tab-row-text' });
-		const displayName = file.extension === 'md' ? file.basename : file.name;
-		textEl.createEl('span', { cls: 'oh-aio-mobile-tab-row-name', text: displayName });
-		if (file.parent && file.parent.path !== '/') {
-			textEl.createEl('span', { cls: 'oh-aio-mobile-tab-row-path', text: file.parent.path });
+		if (isPinnedFile) {
+			const pinIconEl = innerEl.createEl('span', { cls: 'oh-aio-mobile-tab-row-pin' });
+			setIcon(pinIconEl, 'pin');
 		}
+
+		this.buildMobileTabFileText(innerEl, file);
 
 		containerEl.appendChild(rowEl);
 
@@ -574,6 +590,32 @@ export default class OhUtilsPlugin extends Plugin {
 		innerEl.addEventListener('touchmove', cancelLongPress, { passive: true });
 
 		this.attachMobileTabSwipeToDelete(rowEl, innerEl, leaf, file.path);
+	}
+
+	private buildMobileTabPinnedClosedRow(containerEl: HTMLElement, file: TFile): void {
+		const rowEl = createEl('div', { cls: 'oh-aio-mobile-tab-row' });
+		const innerEl = rowEl.createEl('div', { cls: 'oh-aio-mobile-tab-row-inner' });
+
+		const pinIconEl = innerEl.createEl('span', { cls: 'oh-aio-mobile-tab-row-pin' });
+		setIcon(pinIconEl, 'pin');
+
+		this.buildMobileTabFileText(innerEl, file);
+
+		containerEl.appendChild(rowEl);
+
+		innerEl.addEventListener('click', () => {
+			this.app.workspace.getLeaf(false).openFile(file);
+			this.closeMobileTabList();
+		});
+	}
+
+	private buildMobileTabFileText(innerEl: HTMLElement, file: TFile): void {
+		const textEl = innerEl.createEl('div', { cls: 'oh-aio-mobile-tab-row-text' });
+		const displayName = file.extension === 'md' ? file.basename : file.name;
+		textEl.createEl('span', { cls: 'oh-aio-mobile-tab-row-name', text: displayName });
+		if (file.parent && file.parent.path !== '/') {
+			textEl.createEl('span', { cls: 'oh-aio-mobile-tab-row-path', text: file.parent.path });
+		}
 	}
 
 	private attachMobileTabSwipeToDelete(
