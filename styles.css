@@ -257,6 +257,34 @@
 	height: 13px;
 }
 
+/* ── 탭 핀 버튼 ── */
+.oh-utils-tab-pin-btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+	padding: 0;
+	color: var(--tab-text-color-focused-active);
+	opacity: 0;
+	flex-shrink: 0;
+	transition: opacity 0.1s;
+}
+
+.workspace-tab-header:hover .oh-utils-tab-pin-btn,
+.oh-utils-tab-pin-btn.is-active {
+	opacity: 1;
+}
+
+.oh-utils-tab-pin-btn.is-active {
+	color: var(--interactive-accent);
+}
+
+.oh-utils-tab-pin-btn svg {
+	width: 12px;
+	height: 12px;
+}
+
 /* ── 서브 설정 들여쓰기 ── */
 .oh-aio-sub-settings {
 	border-left: 2px solid var(--background-modifier-border);
