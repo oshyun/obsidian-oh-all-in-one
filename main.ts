@@ -12,6 +12,7 @@ import {
 	TAbstractFile,
 	TFile,
 	TFolder,
+	WorkspaceLeaf,
 	normalizePath,
 } from 'obsidian';
 import { around } from 'monkey-around';
@@ -37,6 +38,7 @@ interface OhUtilsSettings {
 	folderActionsShowCopyPath: boolean;
 	pinEnabled: boolean;
 	pinnedPatterns: string;
+	tabPinSyncEnabled: boolean;
 	hideEnabled: boolean;
 	hidePatterns: string;
 	globalHotkeysEnabled: boolean;
@@ -59,6 +61,7 @@ const DEFAULT_SETTINGS: OhUtilsSettings = {
 	folderActionsShowCopyPath: true,
 	pinEnabled: true,
 	pinnedPatterns: '',
+	tabPinSyncEnabled: true,
 	hideEnabled: false,
 	hidePatterns: '',
 	globalHotkeysEnabled: false,
@@ -72,6 +75,7 @@ export default class OhUtilsPlugin extends Plugin {
 	settings: OhUtilsSettings;
 	private openingHomeNote = false;
 	private sortPatcher: (() => void) | null = null;
+	private tabPinPatcher: (() => void) | null = null;
 	private pinObserver: MutationObserver | null = null;
 	private debouncedApplyExplorer = debounce(() => { this.applyPinIcons(); this.applyFolderActionButtons(); }, 50, true);
 	private pinFilter: Ignore | null = null;
@@ -158,21 +162,22 @@ export default class OhUtilsPlugin extends Plugin {
 				}
 
 				if (!this.settings.pinEnabled) return;
-				const isPinned = this.hasExactPinPattern(abstractFile.path);
+
+				const isExplorerPinned = this.hasExactPinPattern(abstractFile.path);
 				menu.addItem(item => {
 					item
-						.setTitle(isPinned ? '핀 해제' : '핀 고정')
-						.setIcon(isPinned ? 'pin-off' : 'pin')
+						.setTitle(isExplorerPinned ? '파일 탐색기 핀 해제' : '파일 탐색기 핀 고정')
+						.setIcon(isExplorerPinned ? 'pin-off' : 'pin')
 						.onClick(async () => {
-							if (isPinned) {
-								this.log('[pin] unpin:', abstractFile.path);
+							if (isExplorerPinned) {
+								this.log('[pin] unpin explorer:', abstractFile.path);
 								this.settings.pinnedPatterns = this.settings.pinnedPatterns
 									.split('\n')
 									.filter(line => line.trim() !== abstractFile.path)
 									.join('\n');
 								this.removePinIcon(abstractFile.path);
 							} else {
-								this.log('[pin] pin:', abstractFile.path);
+								this.log('[pin] pin explorer:', abstractFile.path);
 								const current = this.settings.pinnedPatterns.trimEnd();
 								this.settings.pinnedPatterns = current
 									? current + '\n' + abstractFile.path
@@ -183,6 +188,25 @@ export default class OhUtilsPlugin extends Plugin {
 							this.requestSort();
 						});
 				});
+
+				if (abstractFile instanceof TFile) {
+					let tabLeaf: WorkspaceLeaf | null = null;
+					this.app.workspace.iterateAllLeaves(leaf => {
+						if ((leaf.view as any)?.file?.path === abstractFile.path) tabLeaf = leaf;
+					});
+					if (tabLeaf) {
+						const isTabPinned = (tabLeaf as any).pinned as boolean;
+						menu.addItem(item => {
+							item
+								.setTitle(isTabPinned ? '탭 핀 해제' : '탭 핀 고정')
+								.setIcon(isTabPinned ? 'pin-off' : 'pin')
+								.onClick(() => {
+									this.log('[pin] toggle tab pin:', abstractFile.path, !isTabPinned);
+									(tabLeaf as WorkspaceLeaf).setPinned(!isTabPinned);
+								});
+						});
+					}
+				}
 			})
 		);
 
@@ -290,6 +314,7 @@ export default class OhUtilsPlugin extends Plugin {
 			this.rebuildPinFilter();
 			this.rebuildHideFilter();
 			this.patchFileExplorerSort();
+			this.patchTabPinSync();
 			this.applyPinIcons();
 			this.applyFolderActionButtons();
 			this.setupPinObserver();
@@ -300,11 +325,39 @@ export default class OhUtilsPlugin extends Plugin {
 	}
 
 	async onunload() {
+		this.tabPinPatcher?.();
 		this.sortPatcher?.();
 		this.pinObserver?.disconnect();
 		this.clearPinDecorations();
 		this.clearFolderActionButtons();
 		this.unregisterGlobalHotkeys();
+	}
+
+	// ── 탭 핀 동기화 패치 ────────────────────────────────────
+
+	private patchTabPinSync() {
+		const plugin = this;
+		this.tabPinPatcher = around(WorkspaceLeaf.prototype, {
+			setPinned(next) {
+				return function(this: WorkspaceLeaf, pinned: boolean) {
+					const result = next.call(this, pinned);
+					if (pinned && plugin.settings.pinEnabled && plugin.settings.tabPinSyncEnabled) {
+						const file = (this.view as any)?.file as TFile | undefined;
+						if (file && !plugin.hasExactPinPattern(file.path)) {
+							plugin.log('[pin] tab pinned → syncing to file explorer pin:', file.path);
+							const current = plugin.settings.pinnedPatterns.trimEnd();
+							plugin.settings.pinnedPatterns = current
+								? current + '\n' + file.path
+								: file.path;
+							plugin.saveSettings();
+							plugin.rebuildPinFilter();
+							plugin.requestSort();
+						}
+					}
+					return result;
+				};
+			}
+		});
 	}
 
 	// ── 핀 정렬 패치 ─────────────────────────────────────────
@@ -1037,6 +1090,17 @@ class OhUtilsSettingTab extends PluginSettingTab {
 						this.plugin.requestSort();
 						if (!value) this.plugin.clearPinDecorations();
 						else this.plugin.applyPinIcons();
+					})
+			);
+		new Setting(containerEl)
+			.setName('탭 핀 → 파일 탐색기 핀 동기화')
+			.setDesc('Obsidian 탭을 핀 고정하면 파일 탐색기에도 자동으로 핀 추가됩니다. 탭을 닫아도 파일 탐색기 핀은 유지됩니다.')
+			.addToggle(toggle =>
+				toggle
+					.setValue(this.plugin.settings.tabPinSyncEnabled)
+					.onChange(async (value) => {
+						this.plugin.settings.tabPinSyncEnabled = value;
+						await this.plugin.saveSettings();
 					})
 			);
 		new Setting(containerEl)
