@@ -505,6 +505,9 @@ export default class OhUtilsPlugin extends Plugin {
 
 	private rebuildMobileTabListRows(): void {
 		if (!this.mobileTabListPanelEl) return;
+		if (this.mobileTabListHeaderButtonEl) {
+			this.mobileTabListPanelEl.style.top = this.mobileTabListHeaderButtonEl.getBoundingClientRect().bottom + 'px';
+		}
 		this.mobileTabListPanelEl.empty();
 
 		const activeFile = this.app.workspace.getActiveFile();
