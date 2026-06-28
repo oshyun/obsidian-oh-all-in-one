@@ -542,6 +542,15 @@ export default class OhUtilsPlugin extends Plugin {
 
 	// ── 모바일 탭 목록 ───────────────────────────────────────
 
+	private async toggleTabPin(filePath: string): Promise<void> {
+		this.settings.tabPinnedPaths = this.hasExactTabPin(filePath)
+			? this.removePatternLine(this.settings.tabPinnedPaths, filePath)
+			: this.addPatternLine(this.settings.tabPinnedPaths, filePath);
+		this.rebuildTabPinFilter();
+		this.applyTabPinButtons();
+		await this.saveSettings();
+	}
+
 	setupMobileTabList(): void {
 		if (!this.settings.mobileTabListEnabled) return;
 		this.refreshMobileTabList();
@@ -706,23 +715,24 @@ export default class OhUtilsPlugin extends Plugin {
 		const cancelLongPress = () => {
 			if (longPressTimer !== null) { clearTimeout(longPressTimer); longPressTimer = null; }
 		};
-		innerEl.addEventListener('touchstart', () => {
+		innerEl.addEventListener('touchstart', (e) => {
+			const { clientX, clientY } = e.touches[0];
 			longPressTimer = window.setTimeout(() => {
 				longPressTimer = null;
-				this.showMobileTabRowMenu(leaf, file, isPinned);
+				this.showMobileTabRowMenu(leaf, file, clientX, clientY);
 			}, 500);
 		}, { passive: true });
 		innerEl.addEventListener('touchend', cancelLongPress);
 		innerEl.addEventListener('touchmove', cancelLongPress, { passive: true });
 
-		this.attachMobileTabSwipeToDelete(rowEl, innerEl, leaf, isPinned);
+		this.attachMobileTabSwipeToDelete(rowEl, innerEl, leaf, file.path);
 	}
 
 	private attachMobileTabSwipeToDelete(
 		rowEl: HTMLElement,
 		innerEl: HTMLElement,
 		leaf: WorkspaceLeaf,
-		isPinned: boolean,
+		filePath: string,
 	): void {
 		let touchStartX = 0;
 		let touchCurrentX = 0;
@@ -744,7 +754,7 @@ export default class OhUtilsPlugin extends Plugin {
 			innerEl.style.transition = '';
 
 			if (deltaX < -80) {
-				if (isPinned) {
+				if (this.settings.tabPinEnabled && this.isTabPinned(filePath)) {
 					innerEl.style.transform = '';
 					new Notice('탭 핀 고정 상태입니다. 핀을 해제해야 닫을 수 있습니다.', 3000);
 					return;
@@ -770,21 +780,17 @@ export default class OhUtilsPlugin extends Plugin {
 		});
 	}
 
-	private showMobileTabRowMenu(leaf: WorkspaceLeaf, file: TFile, isPinned: boolean): void {
+	private showMobileTabRowMenu(leaf: WorkspaceLeaf, file: TFile, touchX: number, touchY: number): void {
 		const menu = new Menu();
 
 		if (this.settings.tabPinEnabled) {
+			const currentlyPinned = this.isTabPinned(file.path);
 			menu.addItem(item => {
 				item
-					.setTitle(isPinned ? '탭 핀 해제' : '탭 핀 고정')
-					.setIcon(isPinned ? 'pin-off' : 'pin')
+					.setTitle(currentlyPinned ? '탭 핀 해제' : '탭 핀 고정')
+					.setIcon(currentlyPinned ? 'pin-off' : 'pin')
 					.onClick(async () => {
-						this.settings.tabPinnedPaths = isPinned
-							? this.removePatternLine(this.settings.tabPinnedPaths, file.path)
-							: this.addPatternLine(this.settings.tabPinnedPaths, file.path);
-						this.rebuildTabPinFilter();
-						this.applyTabPinButtons();
-						await this.saveSettings();
+						await this.toggleTabPin(file.path);
 						if (this.mobileTabListIsOpen) this.rebuildMobileTabListRows();
 					});
 			});
@@ -795,7 +801,7 @@ export default class OhUtilsPlugin extends Plugin {
 				.setTitle('닫기')
 				.setIcon('x')
 				.onClick(() => {
-					if (isPinned) {
+					if (this.settings.tabPinEnabled && this.isTabPinned(file.path)) {
 						new Notice('탭 핀 고정 상태입니다. 핀을 해제해야 닫을 수 있습니다.', 3000);
 						return;
 					}
@@ -815,7 +821,7 @@ export default class OhUtilsPlugin extends Plugin {
 				});
 		});
 
-		menu.showAtMouseEvent(new MouseEvent('click'));
+		menu.showAtPosition({ x: touchX, y: touchY });
 	}
 
 	// ── 핀 정렬 패치 ─────────────────────────────────────────
