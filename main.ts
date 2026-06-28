@@ -69,8 +69,7 @@ export default class OhUtilsPlugin extends Plugin {
 	private openingHomeNote = false;
 	private sortPatcher: (() => void) | null = null;
 	private pinObserver: MutationObserver | null = null;
-	private debouncedApplyPinIcons = debounce(() => this.applyPinIcons(), 50, true);
-	private debouncedApplyFolderActions = debounce(() => this.applyFolderActionButtons(), 50, true);
+	private debouncedApplyExplorer = debounce(() => { this.applyPinIcons(); this.applyFolderActionButtons(); }, 50, true);
 	private pinFilter: Ignore | null = null;
 	private hideFilter: Ignore | null = null;
 
@@ -87,12 +86,9 @@ export default class OhUtilsPlugin extends Plugin {
 				if (!this.settings.homeNoteEnabled || !this.settings.homeNotePath) return;
 				if (this.openingHomeNote) return;
 
-				let hasOpenFile = false;
-				this.app.workspace.iterateAllLeaves((leaf) => {
-					if ((leaf.view as any)?.file) hasOpenFile = true;
-				});
-				this.log('[home-note] layout-change, has open file:', hasOpenFile);
-				if (hasOpenFile) return;
+				const hasOpenMarkdown = this.app.workspace.getLeavesOfType('markdown').length > 0;
+				this.log('[home-note] layout-change, has open markdown:', hasOpenMarkdown);
+				if (hasOpenMarkdown) return;
 
 				this.log('[home-note] all tabs closed → opening:', this.settings.homeNotePath);
 				this.openingHomeNote = true;
@@ -246,9 +242,7 @@ export default class OhUtilsPlugin extends Plugin {
 								return true;
 							}
 						});
-						if (plugin.settings.debugMode && items.length !== before) {
-							plugin.log('[hide] filtered', before - items.length, 'item(s)');
-						}
+						if (items.length !== before) plugin.log('[hide] filtered', before - items.length, 'item(s)');
 					}
 
 					// 핀 정렬 적용
@@ -259,9 +253,7 @@ export default class OhUtilsPlugin extends Plugin {
 							return plugin.isItemPinned(file.path, file instanceof TFolder);
 						};
 						const pinned = items.filter(isPinned);
-						if (plugin.settings.debugMode && pinned.length > 0) {
-							plugin.log('[pin] pinned items:', pinned.map((i: any) => i.file?.path));
-						}
+						if (pinned.length > 0) plugin.log('[pin] pinned items:', pinned.map((i: any) => i.file?.path));
 						items = [...pinned, ...items.filter(i => !isPinned(i))];
 					}
 
@@ -330,14 +322,11 @@ export default class OhUtilsPlugin extends Plugin {
 		if (!explorerEl) return;
 
 		this.pinObserver?.disconnect();
-		this.pinObserver = new MutationObserver(() => {
-			this.debouncedApplyPinIcons();
-			this.debouncedApplyFolderActions();
-		});
+		this.pinObserver = new MutationObserver(() => this.debouncedApplyExplorer());
 		this.pinObserver.observe(explorerEl, { childList: true, subtree: true });
 	}
 
-	private applyPinIcons() {
+	applyPinIcons() {
 		const fileExplorer = this.getFileExplorer();
 		if (!fileExplorer?.fileItems) return;
 
@@ -376,7 +365,7 @@ export default class OhUtilsPlugin extends Plugin {
 		(item.el as HTMLElement).querySelector('.oh-utils-pin-icon')?.remove();
 	}
 
-	private clearPinDecorations() {
+	clearPinDecorations() {
 		document.querySelectorAll('.oh-utils-pin-icon').forEach(el => el.remove());
 		document.querySelectorAll('.oh-utils-pinned').forEach(el => el.classList.remove('oh-utils-pinned'));
 	}
@@ -435,7 +424,7 @@ export default class OhUtilsPlugin extends Plugin {
 
 	// ── 폴더 액션 버튼 ─────────────────────────────────────
 
-	private applyFolderActionButtons() {
+	applyFolderActionButtons() {
 		if (!this.settings.folderActionsEnabled) return;
 
 		const fileExplorer = this.getFileExplorer();
@@ -565,8 +554,13 @@ export default class OhUtilsPlugin extends Plugin {
 		setIcon(btn, isPinned ? 'pin-off' : 'pin');
 	}
 
-	private clearFolderActionButtons() {
+	clearFolderActionButtons() {
 		document.querySelectorAll('.oh-utils-item-actions').forEach(el => el.remove());
+	}
+
+	refreshFolderActionButtons() {
+		this.clearFolderActionButtons();
+		this.applyFolderActionButtons();
 	}
 
 	private async createNewFileInFolder(folder: TFolder) {
@@ -889,8 +883,8 @@ class OhUtilsSettingTab extends PluginSettingTab {
 						this.plugin.settings.pinEnabled = value;
 						await this.plugin.saveSettings();
 						this.plugin.requestSort();
-						if (!value) this.plugin['clearPinDecorations']();
-						else this.plugin['applyPinIcons']();
+						if (!value) this.plugin.clearPinDecorations();
+						else this.plugin.applyPinIcons();
 					})
 			);
 		new Setting(containerEl)
@@ -904,8 +898,8 @@ class OhUtilsSettingTab extends PluginSettingTab {
 						this.plugin.settings.pinnedPatterns = value;
 						await this.plugin.saveSettings();
 						this.plugin.rebuildPinFilter();
-						this.plugin['clearPinDecorations']();
-						this.plugin['applyPinIcons']();
+						this.plugin.clearPinDecorations();
+						this.plugin.applyPinIcons();
 						this.plugin.requestSort();
 					});
 				text.inputEl.rows = 6;
@@ -973,8 +967,8 @@ class OhUtilsSettingTab extends PluginSettingTab {
 					.onChange(async (value) => {
 						this.plugin.settings.folderActionsEnabled = value;
 						await this.plugin.saveSettings();
-						if (value) this.plugin['applyFolderActionButtons']();
-						else this.plugin['clearFolderActionButtons']();
+						if (value) this.plugin.applyFolderActionButtons();
+						else this.plugin.clearFolderActionButtons();
 						this.display();
 					})
 			);
@@ -991,8 +985,7 @@ class OhUtilsSettingTab extends PluginSettingTab {
 						.onChange(async (value) => {
 							this.plugin.settings.folderActionsShowNewFile = value;
 							await this.plugin.saveSettings();
-							this.plugin['clearFolderActionButtons']();
-							this.plugin['applyFolderActionButtons']();
+							this.plugin.refreshFolderActionButtons();
 						})
 				);
 
@@ -1005,8 +998,7 @@ class OhUtilsSettingTab extends PluginSettingTab {
 						.onChange(async (value) => {
 							this.plugin.settings.folderActionsShowExpandAll = value;
 							await this.plugin.saveSettings();
-							this.plugin['clearFolderActionButtons']();
-							this.plugin['applyFolderActionButtons']();
+							this.plugin.refreshFolderActionButtons();
 						})
 				);
 
@@ -1019,8 +1011,7 @@ class OhUtilsSettingTab extends PluginSettingTab {
 						.onChange(async (value) => {
 							this.plugin.settings.folderActionsShowCollapseAll = value;
 							await this.plugin.saveSettings();
-							this.plugin['clearFolderActionButtons']();
-							this.plugin['applyFolderActionButtons']();
+							this.plugin.refreshFolderActionButtons();
 						})
 				);
 
@@ -1033,8 +1024,7 @@ class OhUtilsSettingTab extends PluginSettingTab {
 						.onChange(async (value) => {
 							this.plugin.settings.folderActionsShowPin = value;
 							await this.plugin.saveSettings();
-							this.plugin['clearFolderActionButtons']();
-							this.plugin['applyFolderActionButtons']();
+							this.plugin.refreshFolderActionButtons();
 						})
 				);
 
@@ -1047,8 +1037,7 @@ class OhUtilsSettingTab extends PluginSettingTab {
 						.onChange(async (value) => {
 							this.plugin.settings.folderActionsShowDelete = value;
 							await this.plugin.saveSettings();
-							this.plugin['clearFolderActionButtons']();
-							this.plugin['applyFolderActionButtons']();
+							this.plugin.refreshFolderActionButtons();
 						})
 				);
 		}
