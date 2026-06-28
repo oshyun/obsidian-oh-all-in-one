@@ -282,11 +282,6 @@
 }
 
 .oh-aio-tab-pin-btn svg {
-	width: 12px;
-	height: 12px;
-}
-
-.oh-aio-tab-pin-btn.is-active svg {
 	width: 14px;
 	height: 14px;
 }
