@@ -546,13 +546,13 @@ export default class OhUtilsPlugin extends Plugin {
 
 			if (!this.isItemPinned(path, item.file instanceof TFolder)) continue;
 
-			(item.el as HTMLElement).classList.add('oh-utils-pinned');
+			(item.el as HTMLElement).classList.add('oh-aio-pinned');
 
 			// item.el의 firstChild = 타이틀 엘리먼트
 			const titleEl = (item.el as HTMLElement).firstChild as HTMLElement | null;
-			if (!titleEl || titleEl.querySelector('.oh-utils-pin-icon')) continue;
+			if (!titleEl || titleEl.querySelector('.oh-aio-pin-icon')) continue;
 
-			const pinIconEl = createEl('span', { cls: 'oh-utils-pin-icon' });
+			const pinIconEl = createEl('span', { cls: 'oh-aio-pin-icon' });
 			setIcon(pinIconEl, 'pin');
 			// collapse indicator보다 앞에 삽입
 			titleEl.insertBefore(pinIconEl, titleEl.firstChild);
@@ -569,13 +569,13 @@ export default class OhUtilsPlugin extends Plugin {
 		const item = (fileExplorer.fileItems as Record<string, any>)[path];
 		if (!item?.el) return;
 
-		(item.el as HTMLElement).classList.remove('oh-utils-pinned');
-		(item.el as HTMLElement).querySelector('.oh-utils-pin-icon')?.remove();
+		(item.el as HTMLElement).classList.remove('oh-aio-pinned');
+		(item.el as HTMLElement).querySelector('.oh-aio-pin-icon')?.remove();
 	}
 
 	clearPinDecorations() {
-		document.querySelectorAll('.oh-utils-pin-icon').forEach(el => el.remove());
-		document.querySelectorAll('.oh-utils-pinned').forEach(el => el.classList.remove('oh-utils-pinned'));
+		document.querySelectorAll('.oh-aio-pin-icon').forEach(el => el.remove());
+		document.querySelectorAll('.oh-aio-pinned').forEach(el => el.classList.remove('oh-aio-pinned'));
 	}
 
 	// ── 하위 폴더 일괄 접기 ───────────────────────────────────
@@ -665,13 +665,13 @@ export default class OhUtilsPlugin extends Plugin {
 
 			const titleEl = item.el.firstChild as HTMLElement | null;
 			if (!titleEl) continue;
-			if (titleEl.querySelector('.oh-utils-item-actions')) continue;
+			if (titleEl.querySelector('.oh-aio-item-actions')) continue;
 
-			const actionsEl = createEl('div', { cls: 'oh-utils-item-actions' });
+			const actionsEl = createEl('div', { cls: 'oh-aio-item-actions' });
 
 			if (isFolder && folderActionsShowNewFile) {
 				const btn = actionsEl.createEl('button', {
-					cls: 'oh-utils-item-action-btn',
+					cls: 'oh-aio-item-action-btn',
 					attr: { 'aria-label': '새 파일' },
 				});
 				setIcon(btn, 'file-plus');
@@ -684,7 +684,7 @@ export default class OhUtilsPlugin extends Plugin {
 
 			if (isFolder && folderActionsShowExpandAll) {
 				const btn = actionsEl.createEl('button', {
-					cls: 'oh-utils-item-action-btn',
+					cls: 'oh-aio-item-action-btn',
 					attr: { 'aria-label': '모두 펼치기' },
 				});
 				setIcon(btn, 'chevrons-down');
@@ -697,7 +697,7 @@ export default class OhUtilsPlugin extends Plugin {
 
 			if (isFolder && folderActionsShowCollapseAll) {
 				const btn = actionsEl.createEl('button', {
-					cls: 'oh-utils-item-action-btn',
+					cls: 'oh-aio-item-action-btn',
 					attr: { 'aria-label': '모두 닫기' },
 				});
 				setIcon(btn, 'chevrons-up');
@@ -709,7 +709,7 @@ export default class OhUtilsPlugin extends Plugin {
 			}
 
 			if (showPin) {
-				const pinBtn = actionsEl.createEl('button', { cls: 'oh-utils-item-action-btn' });
+				const pinBtn = actionsEl.createEl('button', { cls: 'oh-aio-item-action-btn' });
 				this.refreshPinButton(pinBtn, item.file.path);
 				pinBtn.addEventListener('click', async (e) => {
 					e.stopPropagation();
@@ -737,7 +737,7 @@ export default class OhUtilsPlugin extends Plugin {
 
 			if (showDelete) {
 				const btn = actionsEl.createEl('button', {
-					cls: 'oh-utils-item-action-btn oh-utils-item-action-btn--danger',
+					cls: 'oh-aio-item-action-btn oh-aio-item-action-btn--danger',
 					attr: { 'aria-label': '삭제' },
 				});
 				setIcon(btn, 'trash-2');
@@ -753,7 +753,7 @@ export default class OhUtilsPlugin extends Plugin {
 
 			if (folderActionsShowCopyPath) {
 				const btn = actionsEl.createEl('button', {
-					cls: 'oh-utils-item-action-btn',
+					cls: 'oh-aio-item-action-btn',
 					attr: { 'aria-label': '경로 복사' },
 				});
 				setIcon(btn, 'copy');
@@ -778,7 +778,7 @@ export default class OhUtilsPlugin extends Plugin {
 	}
 
 	clearFolderActionButtons() {
-		document.querySelectorAll('.oh-utils-item-actions').forEach(el => el.remove());
+		document.querySelectorAll('.oh-aio-item-actions').forEach(el => el.remove());
 	}
 
 	refreshFolderActionButtons() {
@@ -883,7 +883,7 @@ class OhUtilsSettingTab extends PluginSettingTab {
 			const searchInput = containerEl.createEl('input', {
 				type: 'search',
 				placeholder: '설정 검색…',
-				cls: 'oh-utils-search-input',
+				cls: 'oh-aio-search-input',
 				attr: { 'aria-label': '설정 검색' },
 			}) as HTMLInputElement;
 			searchInput.value = this.searchQuery;
@@ -921,7 +921,7 @@ class OhUtilsSettingTab extends PluginSettingTab {
 
 	private renderTabsContent(containerEl: HTMLElement): void {
 		// ── 탭 바 ────────────────────────────────────────────
-		const tabBar = containerEl.createDiv({ cls: 'oh-utils-tab-bar' });
+		const tabBar = containerEl.createDiv({ cls: 'oh-aio-tab-bar' });
 		const tabs: { id: SettingsTab; label: string }[] = [
 			{ id: 'general', label: '일반' },
 			{ id: 'homeNote', label: '홈 노트' },
@@ -931,7 +931,7 @@ class OhUtilsSettingTab extends PluginSettingTab {
 		for (const tab of tabs) {
 			const btn = tabBar.createEl('button', {
 				text: tab.label,
-				cls: 'oh-utils-tab-btn' + (this.activeTab === tab.id ? ' is-active' : ''),
+				cls: 'oh-aio-tab-btn' + (this.activeTab === tab.id ? ' is-active' : ''),
 			});
 			btn.addEventListener('click', () => {
 				this.activeTab = tab.id;
@@ -982,7 +982,7 @@ class OhUtilsSettingTab extends PluginSettingTab {
 		if (matchCount === 0) {
 			containerEl.createEl('p', {
 				text: `"${this.searchQuery}"에 해당하는 설정이 없습니다.`,
-				cls: 'oh-utils-search-empty',
+				cls: 'oh-aio-search-empty',
 			});
 		}
 	}
@@ -1069,7 +1069,7 @@ class OhUtilsSettingTab extends PluginSettingTab {
 		if (!Platform.isDesktop) {
 			containerEl.createEl('p', {
 				text: '글로벌 핫키는 데스크탑에서만 사용 가능합니다.',
-				cls: 'oh-utils-notice-text',
+				cls: 'oh-aio-notice-text',
 			});
 			return;
 		}
@@ -1090,15 +1090,15 @@ class OhUtilsSettingTab extends PluginSettingTab {
 
 		const { globalHotkeys } = this.plugin.settings;
 		if (globalHotkeys.length > 0) {
-			const listEl = containerEl.createDiv({ cls: 'oh-utils-hotkey-list' });
+			const listEl = containerEl.createDiv({ cls: 'oh-aio-hotkey-list' });
 			for (const hotkey of globalHotkeys) {
-				const rowEl = listEl.createDiv({ cls: 'oh-utils-hotkey-row' });
+				const rowEl = listEl.createDiv({ cls: 'oh-aio-hotkey-row' });
 				rowEl.createEl('kbd', {
 					text: displayAccelerator(hotkey.accelerator),
-					cls: 'oh-utils-key-badge',
+					cls: 'oh-aio-key-badge',
 				});
-				rowEl.createSpan({ text: hotkey.commandName, cls: 'oh-utils-hotkey-command' });
-				const delBtn = rowEl.createEl('button', { text: '삭제', cls: 'oh-utils-hotkey-delete' });
+				rowEl.createSpan({ text: hotkey.commandName, cls: 'oh-aio-hotkey-command' });
+				const delBtn = rowEl.createEl('button', { text: '삭제', cls: 'oh-aio-hotkey-delete' });
 				delBtn.addEventListener('click', async () => {
 					this.plugin.unregisterGlobalHotkeys();
 					this.plugin.settings.globalHotkeys = globalHotkeys.filter(h => h.id !== hotkey.id);
@@ -1249,7 +1249,7 @@ class OhUtilsSettingTab extends PluginSettingTab {
 			);
 
 		if (this.plugin.settings.folderActionsEnabled) {
-			const subEl = containerEl.createDiv({ cls: 'oh-utils-sub-settings' });
+			const subEl = containerEl.createDiv({ cls: 'oh-aio-sub-settings' });
 
 			new Setting(subEl)
 				.setName('새 파일')
@@ -1427,14 +1427,14 @@ class GlobalHotkeyModal extends Modal {
 	onOpen() {
 		const { contentEl } = this;
 		contentEl.empty();
-		contentEl.addClass('oh-utils-hotkey-modal');
+		contentEl.addClass('oh-aio-hotkey-modal');
 		contentEl.createEl('h2', { text: '글로벌 핫키 추가' });
 
 		// ── 단축키 녹화 ────────────────────────────────
-		contentEl.createEl('p', { text: '단축키', cls: 'oh-utils-modal-label' });
+		contentEl.createEl('p', { text: '단축키', cls: 'oh-aio-modal-label' });
 
 		const recorderEl = contentEl.createEl('button', {
-			cls: 'oh-utils-key-recorder',
+			cls: 'oh-aio-key-recorder',
 			text: '클릭하여 단축키 입력',
 		});
 
@@ -1469,12 +1469,12 @@ class GlobalHotkeyModal extends Modal {
 		});
 
 		// ── 명령어 선택 ────────────────────────────────
-		contentEl.createEl('p', { text: '명령어', cls: 'oh-utils-modal-label' });
+		contentEl.createEl('p', { text: '명령어', cls: 'oh-aio-modal-label' });
 
 		const commandInput = contentEl.createEl('input', {
 			type: 'text',
 			placeholder: '명령어 검색…',
-			cls: 'oh-utils-command-input',
+			cls: 'oh-aio-command-input',
 		}) as HTMLInputElement;
 
 		new CommandSuggest(this.app, commandInput, (cmd) => {
@@ -1483,7 +1483,7 @@ class GlobalHotkeyModal extends Modal {
 		});
 
 		// ── 저장 / 취소 ────────────────────────────────
-		const btnRow = contentEl.createDiv({ cls: 'oh-utils-modal-buttons' });
+		const btnRow = contentEl.createDiv({ cls: 'oh-aio-modal-buttons' });
 
 		const saveBtn = btnRow.createEl('button', { text: '저장', cls: 'mod-cta' });
 		saveBtn.addEventListener('click', () => {

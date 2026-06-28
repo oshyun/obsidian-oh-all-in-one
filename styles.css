@@ -1,5 +1,5 @@
 /* ── 설정 검색 ── */
-.oh-utils-search-input {
+.oh-aio-search-input {
 	width: 100%;
 	margin-bottom: 16px;
 	padding: 7px 12px;
@@ -11,11 +11,11 @@
 	outline: none;
 }
 
-.oh-utils-search-input:focus {
+.oh-aio-search-input:focus {
 	border-color: var(--interactive-accent);
 }
 
-.oh-utils-search-empty {
+.oh-aio-search-empty {
 	color: var(--text-muted);
 	font-size: 0.9em;
 	text-align: center;
@@ -23,14 +23,14 @@
 }
 
 /* ── 설정 탭 바 ── */
-.oh-utils-tab-bar {
+.oh-aio-tab-bar {
 	display: flex;
 	gap: 2px;
 	margin-bottom: 16px;
 	border-bottom: 1px solid var(--background-modifier-border);
 }
 
-.oh-utils-tab-btn {
+.oh-aio-tab-btn {
 	padding: 6px 16px;
 	background: transparent;
 	border: 1px solid transparent;
@@ -44,18 +44,18 @@
 	transition: color 0.1s;
 }
 
-.oh-utils-tab-btn:hover {
+.oh-aio-tab-btn:hover {
 	color: var(--text-normal);
 }
 
-.oh-utils-tab-btn.is-active {
+.oh-aio-tab-btn.is-active {
 	color: var(--text-normal);
 	background: var(--background-primary);
 	border-color: var(--background-modifier-border);
 	border-bottom-color: var(--background-primary);
 }
 
-.oh-utils-pin-icon {
+.oh-aio-pin-icon {
 	display: inline-flex;
 	align-items: center;
 	align-self: center;
@@ -65,28 +65,28 @@
 	flex-shrink: 0;
 }
 
-.oh-utils-pin-icon svg {
+.oh-aio-pin-icon svg {
 	width: 14px;
 	height: 14px;
 }
 
 /* pinned 항목과 일반 항목 사이 구분선 */
-.oh-utils-pinned + .nav-folder:not(.oh-utils-pinned),
-.oh-utils-pinned + .nav-file:not(.oh-utils-pinned) {
+.oh-aio-pinned + .nav-folder:not(.oh-aio-pinned),
+.oh-aio-pinned + .nav-file:not(.oh-aio-pinned) {
 	border-top: 1px solid var(--background-modifier-border);
 	margin-top: 2px;
 	padding-top: 2px;
 }
 
 /* ── 글로벌 핫키 설정 목록 ── */
-.oh-utils-hotkey-list {
+.oh-aio-hotkey-list {
 	display: flex;
 	flex-direction: column;
 	gap: 6px;
 	margin-bottom: 12px;
 }
 
-.oh-utils-hotkey-row {
+.oh-aio-hotkey-row {
 	display: flex;
 	align-items: center;
 	gap: 10px;
@@ -95,7 +95,7 @@
 	border-radius: 6px;
 }
 
-.oh-utils-key-badge {
+.oh-aio-key-badge {
 	font-family: var(--font-monospace);
 	font-size: 0.85em;
 	background: var(--background-modifier-border);
@@ -106,7 +106,7 @@
 	flex-shrink: 0;
 }
 
-.oh-utils-hotkey-command {
+.oh-aio-hotkey-command {
 	flex: 1;
 	font-size: 0.9em;
 	color: var(--text-muted);
@@ -115,24 +115,24 @@
 	white-space: nowrap;
 }
 
-.oh-utils-hotkey-delete {
+.oh-aio-hotkey-delete {
 	font-size: 0.8em;
 	padding: 2px 8px;
 	flex-shrink: 0;
 	cursor: pointer;
 }
 
-.oh-utils-notice-text {
+.oh-aio-notice-text {
 	color: var(--text-muted);
 	font-size: 0.9em;
 }
 
 /* ── 글로벌 핫키 모달 ── */
-.oh-utils-hotkey-modal h2 {
+.oh-aio-hotkey-modal h2 {
 	margin-bottom: 16px;
 }
 
-.oh-utils-modal-label {
+.oh-aio-modal-label {
 	font-size: 0.85em;
 	font-weight: 600;
 	color: var(--text-muted);
@@ -141,7 +141,7 @@
 	letter-spacing: 0.04em;
 }
 
-.oh-utils-key-recorder {
+.oh-aio-key-recorder {
 	width: 100%;
 	padding: 14px;
 	font-size: 1.1em;
@@ -154,11 +154,11 @@
 	transition: border-color 0.15s, background 0.15s;
 }
 
-.oh-utils-key-recorder:hover {
+.oh-aio-key-recorder:hover {
 	border-color: var(--interactive-accent);
 }
 
-.oh-utils-key-recorder.is-recording {
+.oh-aio-key-recorder.is-recording {
 	border-color: var(--interactive-accent);
 	background: var(--background-modifier-hover);
 	color: var(--interactive-accent);
@@ -170,7 +170,7 @@
 	50% { opacity: 0.6; }
 }
 
-.oh-utils-command-input {
+.oh-aio-command-input {
 	width: 100%;
 	padding: 8px 12px;
 	font-size: 0.95em;
@@ -180,7 +180,7 @@
 	color: var(--text-normal);
 }
 
-.oh-utils-modal-buttons {
+.oh-aio-modal-buttons {
 	display: flex;
 	justify-content: flex-end;
 	gap: 8px;
@@ -188,14 +188,14 @@
 }
 
 /* ── 파일/폴더 액션 버튼 ── */
-.oh-utils-item-actions {
+.oh-aio-item-actions {
 	display: none;
 	align-items: center;
 	gap: 1px;
 }
 
 /* 폴더: flex 레이아웃에서 margin-left: auto 로 오른쪽 끝 정렬 */
-.nav-folder-title .oh-utils-item-actions {
+.nav-folder-title .oh-aio-item-actions {
 	flex-shrink: 0;
 	margin-left: auto;
 }
@@ -206,7 +206,7 @@
 	overflow: hidden;
 }
 
-.nav-file-title .oh-utils-item-actions {
+.nav-file-title .oh-aio-item-actions {
 	position: absolute;
 	right: 0;
 	top: 0;
@@ -221,12 +221,12 @@
 	);
 }
 
-.nav-folder-title:hover .oh-utils-item-actions,
-.nav-file-title:hover .oh-utils-item-actions {
+.nav-folder-title:hover .oh-aio-item-actions,
+.nav-file-title:hover .oh-aio-item-actions {
 	display: flex;
 }
 
-.oh-utils-item-action-btn {
+.oh-aio-item-action-btn {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
@@ -241,31 +241,31 @@
 	opacity: 0.6;
 }
 
-.oh-utils-item-action-btn:hover {
+.oh-aio-item-action-btn:hover {
 	background: var(--nav-item-background-hover);
 	color: var(--text-accent);
 	opacity: 1;
 }
 
-.oh-utils-item-action-btn--danger:hover {
+.oh-aio-item-action-btn--danger:hover {
 	color: var(--text-error);
 	background: var(--background-modifier-error-hover, hsla(0, 80%, 60%, 0.15));
 }
 
-.oh-utils-item-action-btn svg {
+.oh-aio-item-action-btn svg {
 	width: 13px;
 	height: 13px;
 }
 
 /* ── 서브 설정 들여쓰기 ── */
-.oh-utils-sub-settings {
+.oh-aio-sub-settings {
 	border-left: 2px solid var(--background-modifier-border);
 	margin-left: 12px;
 	padding-left: 4px;
 	margin-bottom: 8px;
 }
 
-.oh-utils-sub-settings .setting-item {
+.oh-aio-sub-settings .setting-item {
 	padding-top: 6px;
 	padding-bottom: 6px;
 }
