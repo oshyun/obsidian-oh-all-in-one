@@ -201,27 +201,23 @@ export default class OhUtilsPlugin extends Plugin {
 		// 파일 삭제/이름 변경 시 pinnedPatterns 동기화
 		this.registerEvent(
 			this.app.vault.on('delete', (file: TAbstractFile) => {
-				let changed = false;
 				if (this.hasExactPinPattern(file.path)) {
 					this.log('[pin] vault delete → remove from pinnedPatterns:', file.path);
 					this.settings.pinnedPatterns = this.removePatternLine(this.settings.pinnedPatterns, file.path);
 					this.rebuildPinFilter();
 					this.requestSort();
-					changed = true;
+					this.saveSettings();
 				}
-				if (changed) this.saveSettings();
 			})
 		);
 		this.registerEvent(
 			this.app.vault.on('rename', (file: TAbstractFile, oldPath: string) => {
-				let changed = false;
 				if (this.hasExactPinPattern(oldPath)) {
 					this.log('[pin] vault rename → update pinnedPatterns:', oldPath, '→', file.path);
 					this.settings.pinnedPatterns = this.renamePatternLine(this.settings.pinnedPatterns, oldPath, file.path);
 					this.rebuildPinFilter();
-					changed = true;
+					this.saveSettings();
 				}
-				if (changed) this.saveSettings();
 			})
 		);
 
@@ -314,7 +310,6 @@ export default class OhUtilsPlugin extends Plugin {
 				})
 			);
 			this.registerEvent(this.app.workspace.on('active-leaf-change', () => this.refreshMobileTabList()));
-			this.registerEvent(this.app.workspace.on('file-open', () => this.refreshMobileTabList()));
 		});
 
 		this.addSettingTab(new OhUtilsSettingTab(this.app, this));
@@ -1268,7 +1263,7 @@ class OhUtilsSettingTab extends PluginSettingTab {
 		new Setting(containerEl).setName('모바일 탭 목록').setHeading();
 		new Setting(containerEl)
 			.setName('활성화')
-			.setDesc('뷰 헤더에 탭 목록 버튼을 추가합니다. 탭 전환, 스와이프로 닫기, 롱프레스로 핀·닫기·탐색기에서 보기를 지원합니다.')
+			.setDesc('뷰 헤더에 탭 목록 버튼을 추가합니다. 탭 전환, 스와이프로 닫기, 롱프레스로 닫기·탐색기에서 보기를 지원합니다.')
 			.addToggle(toggle =>
 				toggle
 					.setValue(this.plugin.settings.mobileTabListEnabled)
