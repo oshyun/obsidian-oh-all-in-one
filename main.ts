@@ -229,6 +229,14 @@ export default class OhUtilsPlugin extends Plugin {
 				this.previousActiveFilePath = this.app.workspace.getActiveFile()?.path ?? null;
 
 				if (!leavingPath || !this.newlyCreatedFilePaths.has(leavingPath)) return;
+
+				// active-leaf-change가 연속 발생할 때 파일이 아직 열려 있으면 이탈이 아님
+				let isStillOpenInAnyLeaf = false;
+				this.app.workspace.iterateAllLeaves((leaf) => {
+					if ((leaf.view as any)?.file?.path === leavingPath) isStillOpenInAnyLeaf = true;
+				});
+				if (isStillOpenInAnyLeaf) return;
+
 				this.newlyCreatedFilePaths.delete(leavingPath);
 
 				const file = this.app.vault.getFileByPath(leavingPath);
