@@ -367,6 +367,10 @@
 	background: var(--background-secondary);
 }
 
+.oh-aio-mobile-tab-row.is-pinned-closed .oh-aio-mobile-tab-row-inner {
+	opacity: 0.65;
+}
+
 .oh-aio-mobile-tab-row-pin {
 	display: inline-flex;
 	flex-shrink: 0;

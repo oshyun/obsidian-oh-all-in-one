@@ -643,7 +643,8 @@ export default class OhUtilsPlugin extends Plugin {
 	}
 
 	private buildMobileTabPinnedClosedRow(containerEl: HTMLElement, file: TFile): void {
-		const rowEl = createEl('div', { cls: 'oh-aio-mobile-tab-row' });
+		const rowEl = createEl('div', { cls: 'oh-aio-mobile-tab-row is-pinned-closed' });
+		rowEl.dataset.pinnedClosedPath = file.path;
 		const innerEl = rowEl.createEl('div', { cls: 'oh-aio-mobile-tab-row-inner' });
 
 		const pinIconEl = innerEl.createEl('span', { cls: 'oh-aio-mobile-tab-row-pin' });
@@ -651,12 +652,117 @@ export default class OhUtilsPlugin extends Plugin {
 
 		this.buildMobileTabFileText(innerEl, file);
 
+		const unpinButtonEl = innerEl.createEl('div', { cls: 'oh-aio-mobile-tab-row-pin-btn clickable-icon' });
+		setIcon(unpinButtonEl, 'pin-off');
+		unpinButtonEl.setAttribute('aria-label', '핀 해제');
+		unpinButtonEl.addEventListener('click', (e) => {
+			e.stopPropagation();
+			this.settings.pinnedPatterns = this.removePatternLine(this.settings.pinnedPatterns, file.path);
+			this.rebuildPinFilter();
+			this.requestSort();
+			this.saveSettings();
+			this.rebuildMobileTabListRows();
+		});
+
+		const dragHandleEl = innerEl.createEl('div', { cls: 'oh-aio-mobile-tab-row-drag-handle' });
+		setIcon(dragHandleEl, 'grip-vertical');
+
 		containerEl.appendChild(rowEl);
 
 		innerEl.addEventListener('click', () => {
 			this.app.workspace.getLeaf(false).openFile(file);
 			this.closeMobileTabList();
 		});
+
+		this.setupMobileTabPinnedClosedRowDrag(rowEl, dragHandleEl, file.path);
+	}
+
+	private setupMobileTabPinnedClosedRowDrag(rowEl: HTMLElement, dragHandleEl: HTMLElement, filePath: string): void {
+		const panelEl = this.mobileTabListPanelEl;
+		if (!panelEl) return;
+
+		dragHandleEl.addEventListener('touchstart', (e) => {
+			e.stopPropagation();
+
+			const startY = e.touches[0].clientY;
+			const rect = rowEl.getBoundingClientRect();
+
+			const cloneEl = rowEl.cloneNode(true) as HTMLElement;
+			cloneEl.classList.add('oh-aio-mobile-tab-row-drag-clone');
+			cloneEl.style.top = rect.top + 'px';
+			cloneEl.style.left = rect.left + 'px';
+			cloneEl.style.width = rect.width + 'px';
+			document.body.appendChild(cloneEl);
+
+			rowEl.classList.add('is-dragging');
+
+			const indicatorEl = createEl('div', { cls: 'oh-aio-mobile-tab-drop-indicator' });
+			panelEl.appendChild(indicatorEl);
+
+			// touchmove마다 DOM 쿼리·레이아웃 flush를 막기 위해 touchstart 시점에 스냅샷
+			const draggableRows = Array.from(
+				panelEl.querySelectorAll('.oh-aio-mobile-tab-row[data-pinned-closed-path]:not(.is-dragging)')
+			) as HTMLElement[];
+			const panelRect = panelEl.getBoundingClientRect();
+			const rowSnapshots = draggableRows.map(r => {
+				const rRect = r.getBoundingClientRect();
+				return {
+					midY: rRect.top + rRect.height / 2,
+					topOffset: rRect.top - panelRect.top + panelEl.scrollTop,
+					bottomOffset: rRect.bottom - panelRect.top + panelEl.scrollTop,
+				};
+			});
+
+			let targetIndex = -1;
+
+			const onMove = (ev: TouchEvent) => {
+				const touchY = ev.touches[0].clientY;
+				cloneEl.style.transform = `translateY(${touchY - startY}px)`;
+
+				targetIndex = rowSnapshots.length;
+				let indicatorTop = -1;
+
+				for (let i = 0; i < rowSnapshots.length; i++) {
+					if (touchY < rowSnapshots[i].midY) {
+						targetIndex = i;
+						indicatorTop = rowSnapshots[i].topOffset;
+						break;
+					}
+					if (i === rowSnapshots.length - 1) {
+						indicatorTop = rowSnapshots[i].bottomOffset;
+					}
+				}
+
+				if (indicatorTop >= 0) {
+					indicatorEl.style.top = indicatorTop + 'px';
+					indicatorEl.style.display = 'block';
+				}
+			};
+
+			const onEnd = () => {
+				cloneEl.remove();
+				indicatorEl.remove();
+				rowEl.classList.remove('is-dragging');
+
+				document.removeEventListener('touchmove', onMove);
+				document.removeEventListener('touchend', onEnd);
+
+				if (targetIndex >= 0) {
+					const lines = this.settings.pinnedPatterns.split('\n').filter(l => l.trim());
+					const currentIndex = lines.indexOf(filePath);
+					if (currentIndex !== -1) {
+						lines.splice(currentIndex, 1);
+						lines.splice(targetIndex, 0, filePath);
+						this.settings.pinnedPatterns = lines.join('\n');
+						this.saveSettings();
+						this.rebuildMobileTabListRows();
+					}
+				}
+			};
+
+			document.addEventListener('touchmove', onMove, { passive: true });
+			document.addEventListener('touchend', onEnd);
+		}, { passive: true });
 	}
 
 	private buildMobileTabFileText(innerEl: HTMLElement, file: TFile): void {
