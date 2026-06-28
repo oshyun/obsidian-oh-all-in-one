@@ -71,6 +71,7 @@ interface OhUtilsSettings {
   globalHotkeysEnabled: boolean;         // 글로벌 핫키 활성화
   globalHotkeys: GlobalHotkey[];         // 등록된 핫키 목록
   settingsSearchEnabled: boolean;        // 설정 검색창
+  deleteEmptyNewNoteEnabled: boolean;    // 빈 새 노트 자동 삭제
   debugMode: boolean;                    // 디버그 로그
 }
 
@@ -87,6 +88,30 @@ interface GlobalHotkey {
 ## 기능 목록
 
 설정 탭은 `setHeading()`으로 섹션을 구분한다. **1기능 = 1섹션** 규칙.
+
+---
+
+### 0. 빈 새 노트 자동 삭제 (Delete Empty New Note)
+
+새로 만든 노트에 아무것도 입력하지 않고 다른 탭/파일로 이동하면 해당 노트를 자동으로 삭제한다.
+삭제 직후 10초간 Notice가 표시되며 "되돌리기" 링크로 즉시 복원할 수 있다.
+
+**구현 위치:** `main.ts` — `vault.on('create')`, `vault.on('modify')`, `vault.on('rename')`, `workspace.on('active-leaf-change')`
+
+**동작 방식:**
+
+- `vault.on('create')`: `.md` 파일 생성 시 `newlyCreatedFilePaths` Set에 경로 추가.
+- `vault.on('modify')`: 파일 내용이 수정되면 Set에서 제거 (사용자가 뭔가 입력한 것으로 판단).
+- `vault.on('rename')`: 파일명이 변경되면 Set에서 제거 (의도적 상호작용으로 판단).
+- `workspace.on('active-leaf-change')`: 이전 활성 파일이 Set에 있으면 내용이 비어 있는지 확인 후 삭제.
+  - 삭제 후 `Notice`(10초)를 띄우고, "되돌리기" 링크 클릭 시 동일 경로에 빈 파일 재생성 후 열기.
+- `previousActiveFilePath`: active-leaf-change 시점에 이탈한 파일 경로를 추적하는 내부 필드.
+  - `onLayoutReady()`에서 초기화.
+
+**삭제 방식:** `app.fileManager.trashFile(file)` — 사용자의 "삭제된 파일" 설정(.trash / 시스템 휴지통)을 따른다.
+
+**설정:**
+- `deleteEmptyNewNoteEnabled: boolean` — 토글 (기본값 `true`, "일반" 탭 > 노트 섹션)
 
 ---
 
