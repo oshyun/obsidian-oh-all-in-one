@@ -86,9 +86,12 @@ export default class OhUtilsPlugin extends Plugin {
 				if (!this.settings.homeNoteEnabled || !this.settings.homeNotePath) return;
 				if (this.openingHomeNote) return;
 
-				const hasOpenMarkdown = this.app.workspace.getLeavesOfType('markdown').length > 0;
-				this.log('[home-note] layout-change, has open markdown:', hasOpenMarkdown);
-				if (hasOpenMarkdown) return;
+				let hasOpenFile = false;
+				this.app.workspace.iterateAllLeaves((leaf) => {
+					if ((leaf.view as any)?.file) hasOpenFile = true;
+				});
+				this.log('[home-note] layout-change, has open file:', hasOpenFile);
+				if (hasOpenFile) return;
 
 				this.log('[home-note] all tabs closed → opening:', this.settings.homeNotePath);
 				this.openingHomeNote = true;
