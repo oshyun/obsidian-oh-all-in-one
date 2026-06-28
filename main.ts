@@ -514,7 +514,6 @@ export default class OhUtilsPlugin extends Plugin {
 		} = this.settings;
 		const showPin = folderActionsShowPin && pinEnabled;
 		const showDelete = folderActionsShowDelete;
-		const showCopyPath = folderActionsShowCopyPath;
 
 		for (const [, item] of Object.entries(fileItems)) {
 			if (!item?.el || !item.file) continue;
@@ -525,7 +524,7 @@ export default class OhUtilsPlugin extends Plugin {
 
 			// 버튼 표시 여부 판단
 			const hasFolderSpecificButtons = isFolder && (folderActionsShowNewFile || folderActionsShowExpandAll || folderActionsShowCollapseAll);
-			const hasSharedButtons = showPin || showDelete || showCopyPath;
+			const hasSharedButtons = showPin || showDelete || folderActionsShowCopyPath;
 			if (!hasFolderSpecificButtons && !hasSharedButtons) continue;
 
 			const titleEl = item.el.firstChild as HTMLElement | null;
@@ -616,7 +615,7 @@ export default class OhUtilsPlugin extends Plugin {
 				});
 			}
 
-			if (showCopyPath) {
+			if (folderActionsShowCopyPath) {
 				const btn = actionsEl.createEl('button', {
 					cls: 'oh-utils-item-action-btn',
 					attr: { 'aria-label': '경로 복사' },
