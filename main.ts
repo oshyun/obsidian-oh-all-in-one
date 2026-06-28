@@ -486,6 +486,9 @@ export default class OhUtilsPlugin extends Plugin {
 			this.mobileTabListPanelEl = panelEl;
 		}
 
+		const buttonBottom = this.mobileTabListHeaderButtonEl.getBoundingClientRect().bottom;
+		this.mobileTabListPanelEl.style.top = buttonBottom + 'px';
+
 		this.rebuildMobileTabListRows();
 		this.mobileTabListIsOpen = true;
 		this.mobileTabListPanelEl.addClass('is-open');
