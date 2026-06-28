@@ -352,7 +352,6 @@ export default class OhUtilsPlugin extends Plugin {
 			this.registerEvent(
 				this.app.workspace.on('layout-change', () => {
 					if (this.settings.tabPinEnabled) {
-						this.applyTabPinButtons();
 						this.enforceTabPins();
 					}
 					this.refreshMobileTabList();
@@ -493,9 +492,8 @@ export default class OhUtilsPlugin extends Plugin {
 		this.app.workspace.iterateAllLeaves(leaf => {
 			const filePath = (leaf.view as any)?.file?.path as string | undefined;
 			if (!filePath) return;
-			const existing = leafsByPath.get(filePath) ?? [];
-			existing.push(leaf);
-			leafsByPath.set(filePath, existing);
+			if (!leafsByPath.has(filePath)) leafsByPath.set(filePath, []);
+			leafsByPath.get(filePath)!.push(leaf);
 		});
 
 		// 중복 제거: 경로당 첫 번째 탭만 남기고 나머지를 닫는다 (모든 탭 대상)
@@ -508,17 +506,8 @@ export default class OhUtilsPlugin extends Plugin {
 		}
 
 		// 핀 파일 중 열린 탭이 없는 것은 새 탭으로 강제 추가
-		const openedPaths = new Set(leafsByPath.keys());
-		const pinnedFiles = this.app.vault.getMarkdownFiles().filter(file => {
-			try { return this.tabPinFilter!.ignores(file.path); } catch { return false; }
-		});
-		const missingPinnedFiles = pinnedFiles.filter(file => !openedPaths.has(file.path));
-
-		if (missingPinnedFiles.length === 0) {
-			this.enforcingTabPins = false;
-			this.applyTabPinButtons();
-			return;
-		}
+		const pinnedFiles = this.app.vault.getMarkdownFiles().filter(file => this.isTabPinned(file.path));
+		const missingPinnedFiles = pinnedFiles.filter(file => !leafsByPath.has(file.path));
 
 		Promise.all(missingPinnedFiles.map(async file => {
 			this.log('[tab-pin] adding missing pinned tab:', file.path);
