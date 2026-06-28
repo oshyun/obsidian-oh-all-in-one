@@ -39,8 +39,6 @@ interface OhUtilsSettings {
 	folderActionsShowCopyPath: boolean;
 	pinEnabled: boolean;
 	pinnedPatterns: string;
-	tabPinEnabled: boolean;
-	tabPinnedPaths: string;
 	hideEnabled: boolean;
 	hidePatterns: string;
 	globalHotkeysEnabled: boolean;
@@ -67,8 +65,6 @@ const DEFAULT_SETTINGS: OhUtilsSettings = {
 	folderActionsShowCopyPath: true,
 	pinEnabled: true,
 	pinnedPatterns: '',
-	tabPinEnabled: false,
-	tabPinnedPaths: '',
 	hideEnabled: false,
 	hidePatterns: '',
 	globalHotkeysEnabled: false,
@@ -87,7 +83,6 @@ export default class OhUtilsPlugin extends Plugin {
 	private openingHomeNote = false;
 	private sortPatcher: (() => void) | null = null;
 	private leafOpenFilePatcher: (() => void) | null = null;
-	private enforcingTabPins = false;
 	private mobileTabListPanelEl: HTMLElement | null = null;
 	private mobileTabListBackdropEl: HTMLElement | null = null;
 	private mobileTabListHeaderButtonEl: HTMLElement | null = null;
@@ -96,7 +91,6 @@ export default class OhUtilsPlugin extends Plugin {
 	private pinObserver: MutationObserver | null = null;
 	private debouncedApplyExplorer = debounce(() => { this.applyPinIcons(); this.applyFolderActionButtons(); }, 50, true);
 	private pinFilter: Ignore | null = null;
-	private tabPinFilter: Ignore | null = null;
 	private hideFilter: Ignore | null = null;
 	private newlyCreatedFilePaths = new Set<string>();
 	private previousActiveFilePath: string | null = null;
@@ -201,30 +195,10 @@ export default class OhUtilsPlugin extends Plugin {
 						});
 				});
 
-				if (abstractFile instanceof TFile && this.settings.tabPinEnabled) {
-					const isTabPinned = this.hasExactTabPin(abstractFile.path);
-					menu.addItem(item => {
-						item
-							.setTitle(isTabPinned ? '탭 핀 해제' : '탭 핀 고정')
-							.setIcon(isTabPinned ? 'pin-off' : 'pin')
-							.onClick(async () => {
-								if (isTabPinned) {
-									this.log('[tab-pin] unpin:', abstractFile.path);
-									this.settings.tabPinnedPaths = this.removePatternLine(this.settings.tabPinnedPaths, abstractFile.path);
-								} else {
-									this.log('[tab-pin] pin:', abstractFile.path);
-									this.settings.tabPinnedPaths = this.addPatternLine(this.settings.tabPinnedPaths, abstractFile.path);
-								}
-								this.rebuildTabPinFilter();
-								this.applyTabPinButtons();
-								await this.saveSettings();
-							});
-					});
-				}
 			})
 		);
 
-		// 파일 삭제/이름 변경 시 pinnedPatterns + tabPinnedPaths 동기화
+		// 파일 삭제/이름 변경 시 pinnedPatterns 동기화
 		this.registerEvent(
 			this.app.vault.on('delete', (file: TAbstractFile) => {
 				let changed = false;
@@ -233,12 +207,6 @@ export default class OhUtilsPlugin extends Plugin {
 					this.settings.pinnedPatterns = this.removePatternLine(this.settings.pinnedPatterns, file.path);
 					this.rebuildPinFilter();
 					this.requestSort();
-					changed = true;
-				}
-				if (this.hasExactTabPin(file.path)) {
-					this.log('[tab-pin] vault delete → remove from tabPinnedPaths:', file.path);
-					this.settings.tabPinnedPaths = this.removePatternLine(this.settings.tabPinnedPaths, file.path);
-					this.rebuildTabPinFilter();
 					changed = true;
 				}
 				if (changed) this.saveSettings();
@@ -251,12 +219,6 @@ export default class OhUtilsPlugin extends Plugin {
 					this.log('[pin] vault rename → update pinnedPatterns:', oldPath, '→', file.path);
 					this.settings.pinnedPatterns = this.renamePatternLine(this.settings.pinnedPatterns, oldPath, file.path);
 					this.rebuildPinFilter();
-					changed = true;
-				}
-				if (this.hasExactTabPin(oldPath)) {
-					this.log('[tab-pin] vault rename → update tabPinnedPaths:', oldPath, '→', file.path);
-					this.settings.tabPinnedPaths = this.renamePatternLine(this.settings.tabPinnedPaths, oldPath, file.path);
-					this.rebuildTabPinFilter();
 					changed = true;
 				}
 				if (changed) this.saveSettings();
@@ -339,21 +301,15 @@ export default class OhUtilsPlugin extends Plugin {
 			this.previousActiveFilePath = this.app.workspace.getActiveFile()?.path ?? null;
 			this.rebuildPinFilter();
 			this.rebuildHideFilter();
-			this.rebuildTabPinFilter();
 			this.patchFileExplorerSort();
 			this.patchLeafOpenFile();
 			this.applyPinIcons();
 			this.applyFolderActionButtons();
-			this.applyTabPinButtons();
 			this.setupPinObserver();
 			this.registerGlobalHotkeys();
-			this.enforceTabPins();
 			this.setupMobileTabList();
 			this.registerEvent(
 				this.app.workspace.on('layout-change', () => {
-					if (this.settings.tabPinEnabled) {
-						this.enforceTabPins();
-					}
 					this.refreshMobileTabList();
 				})
 			);
@@ -370,69 +326,8 @@ export default class OhUtilsPlugin extends Plugin {
 		this.pinObserver?.disconnect();
 		this.clearPinDecorations();
 		this.clearFolderActionButtons();
-		this.clearTabPinButtons();
 		this.teardownMobileTabList();
 		this.unregisterGlobalHotkeys();
-	}
-
-	// ── 탭 핀 ────────────────────────────────────────────────
-
-	rebuildTabPinFilter() {
-		this.tabPinFilter = this.buildIgnoreFilter(this.settings.tabPinnedPaths);
-		this.log('[tab-pin] filter', this.tabPinFilter ? 'rebuilt' : 'cleared');
-	}
-
-	private hasExactTabPin(path: string): boolean {
-		return this.hasExactMatch(this.settings.tabPinnedPaths, path);
-	}
-
-	private isTabPinned(path: string): boolean {
-		if (!this.tabPinFilter) return false;
-		try { return this.tabPinFilter.ignores(path); } catch { return false; }
-	}
-
-	applyTabPinButtons() {
-		if (!this.settings.tabPinEnabled) return;
-		this.app.workspace.iterateAllLeaves(leaf => {
-			const tabHeaderEl = (leaf as any).tabHeaderEl as HTMLElement | undefined;
-			if (!tabHeaderEl) return;
-
-			const filePath = (leaf.view as any)?.file?.path as string | undefined;
-			if (!filePath) return;
-
-			const pinned = this.isTabPinned(filePath);
-
-			const existingBtn = tabHeaderEl.querySelector<HTMLElement>('.oh-aio-tab-pin-btn');
-			if (existingBtn) {
-				existingBtn.toggleClass('is-active', pinned);
-				return;
-			}
-
-			const closeBtn = tabHeaderEl.querySelector('.workspace-tab-header-inner-close-button');
-			if (!closeBtn) return;
-
-			const pinBtn = createEl('div', { cls: 'oh-aio-tab-pin-btn clickable-icon' });
-			pinBtn.toggleClass('is-active', pinned);
-			setIcon(pinBtn, 'pin');
-
-			pinBtn.addEventListener('click', async (e) => {
-				e.stopPropagation();
-				const currentlyPinned = this.hasExactTabPin(filePath);
-				this.settings.tabPinnedPaths = currentlyPinned
-					? this.removePatternLine(this.settings.tabPinnedPaths, filePath)
-					: this.addPatternLine(this.settings.tabPinnedPaths, filePath);
-				this.rebuildTabPinFilter();
-				const newPinned = this.isTabPinned(filePath);
-				pinBtn.toggleClass('is-active', newPinned);
-				await this.saveSettings();
-			});
-
-			closeBtn.parentElement?.insertBefore(pinBtn, closeBtn);
-		});
-	}
-
-	clearTabPinButtons() {
-		document.querySelectorAll('.oh-aio-tab-pin-btn').forEach(el => el.remove());
 	}
 
 	private patchLeafOpenFile() {
@@ -479,53 +374,7 @@ export default class OhUtilsPlugin extends Plugin {
 		});
 	}
 
-	private enforceTabPins() {
-		if (!this.settings.tabPinEnabled || !this.tabPinFilter) return;
-		if (this.enforcingTabPins) return;
-		this.enforcingTabPins = true;
-
-		// 경로별 열린 leaf 목록 수집
-		const leafsByPath = new Map<string, WorkspaceLeaf[]>();
-		this.app.workspace.iterateAllLeaves(leaf => {
-			const filePath = (leaf.view as any)?.file?.path as string | undefined;
-			if (!filePath) return;
-			if (!leafsByPath.has(filePath)) leafsByPath.set(filePath, []);
-			leafsByPath.get(filePath)!.push(leaf);
-		});
-
-		// 중복 제거: 경로당 첫 번째 탭만 남기고 나머지를 닫는다 (모든 탭 대상)
-		for (const [filePath, leaves] of leafsByPath) {
-			if (leaves.length <= 1) continue;
-			this.log('[tab-pin] closing duplicate tabs for:', filePath, 'count:', leaves.length - 1);
-			for (let i = 1; i < leaves.length; i++) {
-				leaves[i].detach();
-			}
-		}
-
-		// 핀 파일 중 열린 탭이 없는 것은 새 탭으로 강제 추가
-		const pinnedFiles = this.app.vault.getMarkdownFiles().filter(file => this.isTabPinned(file.path));
-		const missingPinnedFiles = pinnedFiles.filter(file => !leafsByPath.has(file.path));
-
-		Promise.all(missingPinnedFiles.map(async file => {
-			this.log('[tab-pin] adding missing pinned tab:', file.path);
-			const leaf = this.app.workspace.getLeaf('tab');
-			await leaf.openFile(file);
-		})).finally(() => {
-			this.enforcingTabPins = false;
-			this.applyTabPinButtons();
-		});
-	}
-
 	// ── 모바일 탭 목록 ───────────────────────────────────────
-
-	private async toggleTabPin(filePath: string): Promise<void> {
-		this.settings.tabPinnedPaths = this.hasExactTabPin(filePath)
-			? this.removePatternLine(this.settings.tabPinnedPaths, filePath)
-			: this.addPatternLine(this.settings.tabPinnedPaths, filePath);
-		this.rebuildTabPinFilter();
-		this.applyTabPinButtons();
-		await this.saveSettings();
-	}
 
 	setupMobileTabList(): void {
 		if (!this.settings.mobileTabListEnabled) return;
@@ -645,8 +494,7 @@ export default class OhUtilsPlugin extends Plugin {
 		for (const openLeaf of openLeaves) {
 			const file = (openLeaf.view as any).file as TFile;
 			const isActive = file.path === activeFile?.path;
-			const isPinned = this.settings.tabPinEnabled && this.isTabPinned(file.path);
-			this.buildMobileTabRow(this.mobileTabListPanelEl, openLeaf, file, isActive, isPinned);
+			this.buildMobileTabRow(this.mobileTabListPanelEl, openLeaf, file, isActive);
 		}
 	}
 
@@ -655,7 +503,6 @@ export default class OhUtilsPlugin extends Plugin {
 		leaf: WorkspaceLeaf,
 		file: TFile,
 		isActive: boolean,
-		isPinned: boolean,
 	): void {
 		const rowEl = createEl('div', { cls: 'oh-aio-mobile-tab-row' });
 		if (isActive) rowEl.addClass('is-active');
@@ -665,11 +512,6 @@ export default class OhUtilsPlugin extends Plugin {
 		setIcon(deleteIconEl, 'trash-2');
 
 		const innerEl = rowEl.createEl('div', { cls: 'oh-aio-mobile-tab-row-inner' });
-
-		if (isPinned) {
-			const pinIconEl = innerEl.createEl('span', { cls: 'oh-aio-mobile-tab-row-pin' });
-			setIcon(pinIconEl, 'pin');
-		}
 
 		const textEl = innerEl.createEl('div', { cls: 'oh-aio-mobile-tab-row-text' });
 		const displayName = file.extension === 'md' ? file.basename : file.name;
@@ -730,11 +572,6 @@ export default class OhUtilsPlugin extends Plugin {
 			innerEl.style.transition = '';
 
 			if (deltaX < -80) {
-				if (this.settings.tabPinEnabled && this.isTabPinned(filePath)) {
-					innerEl.style.transform = '';
-					new Notice('탭 핀 고정 상태입니다. 핀을 해제해야 닫을 수 있습니다.', 3000);
-					return;
-				}
 				innerEl.style.transform = 'translateX(-100%)';
 				const rowHeight = rowEl.offsetHeight;
 				rowEl.style.overflow = 'hidden';
@@ -759,28 +596,11 @@ export default class OhUtilsPlugin extends Plugin {
 	private showMobileTabRowMenu(leaf: WorkspaceLeaf, file: TFile, touchX: number, touchY: number): void {
 		const menu = new Menu();
 
-		if (this.settings.tabPinEnabled) {
-			const currentlyPinned = this.isTabPinned(file.path);
-			menu.addItem(item => {
-				item
-					.setTitle(currentlyPinned ? '탭 핀 해제' : '탭 핀 고정')
-					.setIcon(currentlyPinned ? 'pin-off' : 'pin')
-					.onClick(async () => {
-						await this.toggleTabPin(file.path);
-						if (this.mobileTabListIsOpen) this.rebuildMobileTabListRows();
-					});
-			});
-		}
-
 		menu.addItem(item => {
 			item
 				.setTitle('닫기')
 				.setIcon('x')
 				.onClick(() => {
-					if (this.settings.tabPinEnabled && this.isTabPinned(file.path)) {
-						new Notice('탭 핀 고정 상태입니다. 핀을 해제해야 닫을 수 있습니다.', 3000);
-						return;
-					}
 					leaf.detach();
 					if (this.mobileTabListIsOpen) this.rebuildMobileTabListRows();
 				});
@@ -1604,41 +1424,6 @@ class OhUtilsSettingTab extends PluginSettingTab {
 						this.plugin.clearPinDecorations();
 						this.plugin.applyPinIcons();
 						this.plugin.requestSort();
-					});
-				text.inputEl.rows = 6;
-				text.inputEl.style.width = '100%';
-				text.inputEl.style.fontFamily = 'var(--font-monospace)';
-			});
-
-		// ── 탭 핀 ──────────────────────────────────────────────
-		new Setting(containerEl).setName('탭 핀').setHeading();
-		new Setting(containerEl)
-			.setName('활성화')
-			.setDesc('탭 핀 고정된 파일은 탭을 닫아도 자동으로 다시 열립니다. 파일을 우클릭하거나 탭 핀 버튼으로 설정할 수 있습니다.')
-			.addToggle(toggle =>
-				toggle
-					.setValue(this.plugin.settings.tabPinEnabled)
-					.onChange(async (value) => {
-						this.plugin.settings.tabPinEnabled = value;
-						if (value) {
-							this.plugin.applyTabPinButtons();
-						} else {
-							this.plugin.clearTabPinButtons();
-						}
-						await this.plugin.saveSettings();
-					})
-			);
-		new Setting(containerEl)
-			.setName('탭 핀 패턴')
-			.setDesc('.gitignore 형식. 한 줄에 하나씩. 예: Notes/Home.md, Daily/*.md')
-			.addTextArea(text => {
-				text
-					.setPlaceholder('Notes/Home.md\nDaily/*.md')
-					.setValue(this.plugin.settings.tabPinnedPaths)
-					.onChange(async (value) => {
-						this.plugin.settings.tabPinnedPaths = value;
-						await this.plugin.saveSettings();
-						this.plugin.rebuildTabPinFilter();
 					});
 				text.inputEl.rows = 6;
 				text.inputEl.style.width = '100%';

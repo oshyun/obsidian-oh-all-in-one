@@ -257,35 +257,6 @@
 	height: 13px;
 }
 
-/* ── 탭 핀 버튼 ── */
-.oh-aio-tab-pin-btn {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	width: 16px;
-	height: 16px;
-	padding: 0;
-	color: var(--tab-text-color-focused-active);
-	opacity: 0;
-	flex-shrink: 0;
-	transition: opacity 0.1s;
-}
-
-.workspace-tab-header:hover .oh-aio-tab-pin-btn,
-.oh-aio-tab-pin-btn.is-active {
-	opacity: 1;
-}
-
-.oh-aio-tab-pin-btn.is-active {
-	color: var(--interactive-accent);
-	filter: drop-shadow(0 0 3px hsla(var(--accent-h), var(--accent-s), var(--accent-l), 0.7));
-}
-
-.oh-aio-tab-pin-btn svg {
-	width: 14px;
-	height: 14px;
-}
-
 /* ── 서브 설정 들여쓰기 ── */
 .oh-aio-sub-settings {
 	border-left: 2px solid var(--background-modifier-border);
