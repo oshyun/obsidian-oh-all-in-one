@@ -716,9 +716,8 @@ export default class OhUtilsPlugin extends Plugin {
 	}
 
 	private applyMobileTabLeafOrder(leaves: WorkspaceLeaf[]): WorkspaceLeaf[] {
-		const currentPaths = leaves.map(l => (l.view as any)?.file?.path as string).filter(Boolean);
 		if (this.mobileTabListLeafOrder.length === 0) {
-			this.mobileTabListLeafOrder = currentPaths;
+			this.mobileTabListLeafOrder = leaves.map(l => (l.view as any)?.file?.path as string).filter(Boolean);
 			return leaves;
 		}
 		const orderMap = new Map(this.mobileTabListLeafOrder.map((p, i) => [p, i]));
@@ -753,29 +752,37 @@ export default class OhUtilsPlugin extends Plugin {
 			const indicatorEl = createEl('div', { cls: 'oh-aio-mobile-tab-drop-indicator' });
 			panelEl.appendChild(indicatorEl);
 
+			// touchmove마다 DOM 쿼리·레이아웃 flush를 막기 위해 touchstart 시점에 스냅샷
+			const draggableRows = Array.from(
+				panelEl.querySelectorAll('.oh-aio-mobile-tab-row[data-file-path]:not(.is-dragging)')
+			) as HTMLElement[];
+			const panelRect = panelEl.getBoundingClientRect();
+			const rowSnapshots = draggableRows.map(r => {
+				const rRect = r.getBoundingClientRect();
+				return {
+					midY: rRect.top + rRect.height / 2,
+					topOffset: rRect.top - panelRect.top + panelEl.scrollTop,
+					bottomOffset: rRect.bottom - panelRect.top + panelEl.scrollTop,
+				};
+			});
+
 			let targetIndex = -1;
 
 			const onMove = (ev: TouchEvent) => {
 				const touchY = ev.touches[0].clientY;
 				cloneEl.style.transform = `translateY(${touchY - startY}px)`;
 
-				const draggableRows = Array.from(
-					panelEl.querySelectorAll('.oh-aio-mobile-tab-row[data-file-path]:not(.is-dragging)')
-				) as HTMLElement[];
-
-				const panelRect = panelEl.getBoundingClientRect();
-				targetIndex = draggableRows.length;
+				targetIndex = rowSnapshots.length;
 				let indicatorTop = -1;
 
-				for (let i = 0; i < draggableRows.length; i++) {
-					const rRect = draggableRows[i].getBoundingClientRect();
-					if (touchY < rRect.top + rRect.height / 2) {
+				for (let i = 0; i < rowSnapshots.length; i++) {
+					if (touchY < rowSnapshots[i].midY) {
 						targetIndex = i;
-						indicatorTop = rRect.top - panelRect.top + panelEl.scrollTop;
+						indicatorTop = rowSnapshots[i].topOffset;
 						break;
 					}
-					if (i === draggableRows.length - 1) {
-						indicatorTop = rRect.bottom - panelRect.top + panelEl.scrollTop;
+					if (i === rowSnapshots.length - 1) {
+						indicatorTop = rowSnapshots[i].bottomOffset;
 					}
 				}
 
@@ -794,8 +801,7 @@ export default class OhUtilsPlugin extends Plugin {
 				document.removeEventListener('touchend', onEnd);
 
 				if (targetIndex >= 0) {
-					const orderedWithoutDragged = this.mobileTabListLeafOrder.filter(p => p !== filePath);
-					const newOrder = [...orderedWithoutDragged];
+					const newOrder = this.mobileTabListLeafOrder.filter(p => p !== filePath);
 					newOrder.splice(targetIndex, 0, filePath);
 					this.mobileTabListLeafOrder = newOrder;
 					this.rebuildMobileTabListRows();
