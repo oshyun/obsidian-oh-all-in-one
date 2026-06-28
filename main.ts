@@ -405,6 +405,11 @@ export default class OhUtilsPlugin extends Plugin {
 			window.history.pushState(null, '');
 		}));
 		this.registerDomEvent(window, 'popstate', () => {
+			if (this.mobileTabListIsOpen) {
+				this.closeMobileTabList();
+				window.history.pushState(null, '');
+				return;
+			}
 			if (!this.settings.mobileBackNavigationEnabled) return;
 			this.log('[android-back] popstate → navigate back');
 			this.navigateBackInWorkspace();
