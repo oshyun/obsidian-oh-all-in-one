@@ -86,6 +86,9 @@ export default class OhUtilsPlugin extends Plugin {
 				if (!this.settings.homeNoteEnabled || !this.settings.homeNotePath) return;
 				if (this.openingHomeNote) return;
 
+				// getLeavesOfType('markdown') 대신 iterateAllLeaves를 쓴다.
+				// getLeavesOfType은 PDF·캔버스·이미지 등 비마크다운 파일을 무시하므로,
+				// 그 파일만 남아 있을 때도 홈 노트를 강제로 열어 버린다.
 				let hasOpenFile = false;
 				this.app.workspace.iterateAllLeaves((leaf) => {
 					if ((leaf.view as any)?.file) hasOpenFile = true;
