@@ -324,7 +324,11 @@ export default class OhUtilsPlugin extends Plugin {
 		this.addCommand({
 			id: 'toggle-mobile-tab-list',
 			name: '모바일 탭 목록 열기/닫기',
-			callback: () => this.toggleMobileTabList(),
+			checkCallback: (checking: boolean) => {
+				if (!Platform.isMobile || !this.settings.mobileTabListEnabled || !this.mobileTabListHeaderButtonEl) return false;
+				if (!checking) this.toggleMobileTabList();
+				return true;
+			},
 		});
 
 		this.addSettingTab(new OhUtilsSettingTab(this.app, this));
