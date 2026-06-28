@@ -207,7 +207,6 @@ export default class OhUtilsPlugin extends Plugin {
 		);
 		this.registerEvent(
 			this.app.vault.on('modify', (file) => {
-				if (!(file instanceof TFile)) return;
 				if (this.newlyCreatedFilePaths.delete(file.path)) {
 					this.log('[new-note-cleanup] modified, stopped tracking:', file.path);
 				}
@@ -233,12 +232,11 @@ export default class OhUtilsPlugin extends Plugin {
 				const file = this.app.vault.getFileByPath(leavingPath);
 				if (!(file instanceof TFile)) return;
 
-				const content = await this.app.vault.read(file);
+				const content = await this.app.vault.cachedRead(file);
 				if (content !== '') return;
 
 				this.log('[new-note-cleanup] trashing empty new note:', leavingPath);
 				const fileName = file.basename;
-				const deletedPath = leavingPath;
 				await (this.app as any).fileManager.trashFile(file);
 
 				const fragment = new DocumentFragment();
@@ -250,8 +248,8 @@ export default class OhUtilsPlugin extends Plugin {
 				let notice: Notice;
 				undoLink.addEventListener('click', async (e) => {
 					e.preventDefault();
-					await this.app.vault.create(deletedPath, '');
-					await this.app.workspace.openLinkText(normalizePath(deletedPath), '');
+					await this.app.vault.create(leavingPath, '');
+					await this.app.workspace.openLinkText(normalizePath(leavingPath), '');
 					notice.hide();
 				});
 				notice = new Notice(fragment, 10000);
