@@ -217,6 +217,7 @@ export default class OhUtilsPlugin extends Plugin {
 		this.registerEvent(
 			this.app.vault.on('create', (file) => {
 				if (!(file instanceof TFile) || file.extension !== 'md') return;
+				if (this.openingHomeNote) return;
 				this.newlyCreatedFilePaths.add(file.path);
 				this.log('[new-note-cleanup] tracking:', file.path);
 			})
@@ -243,14 +244,7 @@ export default class OhUtilsPlugin extends Plugin {
 				this.previousActiveFilePath = this.app.workspace.getActiveFile()?.path ?? null;
 
 				if (!leavingPath || !this.newlyCreatedFilePaths.has(leavingPath)) return;
-
-				// active-leaf-change가 연속 발생할 때 파일이 아직 열려 있으면 이탈이 아님
-				let isStillOpenInAnyLeaf = false;
-				this.app.workspace.iterateAllLeaves((leaf) => {
-					if ((leaf.view as any)?.file?.path === leavingPath) isStillOpenInAnyLeaf = true;
-				});
-				if (isStillOpenInAnyLeaf) return;
-
+				// 동시 실행 방지: 먼저 추적에서 제거
 				this.newlyCreatedFilePaths.delete(leavingPath);
 
 				const file = this.app.vault.getFileByPath(leavingPath);
@@ -258,6 +252,17 @@ export default class OhUtilsPlugin extends Plugin {
 
 				const content = await this.app.vault.cachedRead(file);
 				if (content !== '') return;
+
+				// 비동기 읽기 후 재확인: 모바일 leaf 로딩 지연 및 연속 이벤트 대응
+				// (leaf.file이 읽기 전에는 미세팅일 수 있으므로 읽기 완료 후에 판단)
+				let isStillOpen = false;
+				this.app.workspace.iterateAllLeaves((leaf) => {
+					if ((leaf.view as any)?.file?.path === leavingPath) isStillOpen = true;
+				});
+				if (isStillOpen || this.app.workspace.getActiveFile()?.path === leavingPath) {
+					this.newlyCreatedFilePaths.add(leavingPath);
+					return;
+				}
 
 				this.log('[new-note-cleanup] trashing empty new note:', leavingPath);
 				const fileName = file.basename;
