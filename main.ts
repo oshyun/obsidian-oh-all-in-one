@@ -204,23 +204,19 @@ export default class OhUtilsPlugin extends Plugin {
 										.split('\n')
 										.filter(line => line.trim() !== abstractFile.path)
 										.join('\n');
-									let openLeaf: WorkspaceLeaf | null = null;
-									this.app.workspace.iterateAllLeaves(leaf => {
-										if ((leaf.view as any)?.file?.path === abstractFile.path) openLeaf = leaf as WorkspaceLeaf;
-									});
-									(openLeaf as WorkspaceLeaf | null)?.setPinned(false);
 								} else {
 									this.log('[tab-pin] pin:', abstractFile.path);
 									const current = this.settings.tabPinnedPaths.trimEnd();
 									this.settings.tabPinnedPaths = current
 										? current + '\n' + abstractFile.path
 										: abstractFile.path;
-									let openLeaf: WorkspaceLeaf | null = null;
-									this.app.workspace.iterateAllLeaves(leaf => {
-										if ((leaf.view as any)?.file?.path === abstractFile.path) openLeaf = leaf as WorkspaceLeaf;
-									});
-									(openLeaf as WorkspaceLeaf | null)?.setPinned(true);
 								}
+								this.rebuildTabPinCache();
+								let openLeaf: WorkspaceLeaf | null = null;
+								this.app.workspace.iterateAllLeaves(leaf => {
+									if ((leaf.view as any)?.file?.path === abstractFile.path) openLeaf = leaf as WorkspaceLeaf;
+								});
+								(openLeaf as WorkspaceLeaf | null)?.setPinned(!isTabPinned);
 								await this.saveSettings();
 							});
 					});
@@ -248,6 +244,7 @@ export default class OhUtilsPlugin extends Plugin {
 						.split('\n')
 						.filter(line => line.trim() !== file.path)
 						.join('\n');
+					this.rebuildTabPinCache();
 					changed = true;
 				}
 				if (changed) this.saveSettings();
@@ -271,6 +268,7 @@ export default class OhUtilsPlugin extends Plugin {
 						.split('\n')
 						.map(line => line.trim() === oldPath ? file.path : line)
 						.join('\n');
+					this.rebuildTabPinCache();
 					changed = true;
 				}
 				if (changed) this.saveSettings();
@@ -353,6 +351,7 @@ export default class OhUtilsPlugin extends Plugin {
 			this.previousActiveFilePath = this.app.workspace.getActiveFile()?.path ?? null;
 			this.rebuildPinFilter();
 			this.rebuildHideFilter();
+			this.rebuildTabPinCache();
 			this.patchFileExplorerSort();
 			this.applyPinIcons();
 			this.applyFolderActionButtons();
@@ -380,17 +379,20 @@ export default class OhUtilsPlugin extends Plugin {
 
 	// ── 탭 핀 ────────────────────────────────────────────────
 
+	private tabPinnedPathsSet = new Set<string>();
+
+	rebuildTabPinCache() {
+		this.tabPinnedPathsSet = new Set(
+			this.settings.tabPinnedPaths.split('\n').map(l => l.trim()).filter(Boolean)
+		);
+	}
+
 	private hasExactTabPin(path: string): boolean {
-		return this.settings.tabPinnedPaths
-			.split('\n')
-			.some(line => line.trim() === path);
+		return this.tabPinnedPathsSet.has(path);
 	}
 
 	private reopenTabPinnedFiles() {
-		if (!this.settings.tabPinEnabled || !this.settings.tabPinnedPaths.trim()) return;
-
-		const tabPinnedPaths = this.settings.tabPinnedPaths
-			.split('\n').map(l => l.trim()).filter(Boolean);
+		if (!this.settings.tabPinEnabled || this.tabPinnedPathsSet.size === 0) return;
 
 		const openFilePaths = new Set<string>();
 		this.app.workspace.iterateAllLeaves(leaf => {
@@ -398,7 +400,7 @@ export default class OhUtilsPlugin extends Plugin {
 			if (file) openFilePaths.add(file.path);
 		});
 
-		const missingPaths = tabPinnedPaths.filter(p => !openFilePaths.has(p));
+		const missingPaths = [...this.tabPinnedPathsSet].filter(p => !openFilePaths.has(p));
 		if (missingPaths.length === 0) return;
 
 		this.reopeningTabPinnedFiles = true;
@@ -493,10 +495,12 @@ export default class OhUtilsPlugin extends Plugin {
 		this.log('[hide] filter rebuilt, patterns:', patterns.split('\n').filter(Boolean));
 	}
 
+	private hasExactMatch(patterns: string, path: string): boolean {
+		return patterns.split('\n').some(line => line.trim() === path);
+	}
+
 	private hasExactPinPattern(filePath: string): boolean {
-		return this.settings.pinnedPatterns
-			.split('\n')
-			.some(line => line.trim() === filePath);
+		return this.hasExactMatch(this.settings.pinnedPatterns, filePath);
 	}
 
 	// 아이템 자신이 직접 핀 패턴에 매칭되는지 확인한다.
