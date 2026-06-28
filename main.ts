@@ -174,17 +174,11 @@ export default class OhUtilsPlugin extends Plugin {
 						.onClick(async () => {
 							if (isExplorerPinned) {
 								this.log('[pin] unpin explorer:', abstractFile.path);
-								this.settings.pinnedPatterns = this.settings.pinnedPatterns
-									.split('\n')
-									.filter(line => line.trim() !== abstractFile.path)
-									.join('\n');
+								this.settings.pinnedPatterns = this.removePatternLine(this.settings.pinnedPatterns, abstractFile.path);
 								this.removePinIcon(abstractFile.path);
 							} else {
 								this.log('[pin] pin explorer:', abstractFile.path);
-								const current = this.settings.pinnedPatterns.trimEnd();
-								this.settings.pinnedPatterns = current
-									? current + '\n' + abstractFile.path
-									: abstractFile.path;
+								this.settings.pinnedPatterns = this.addPatternLine(this.settings.pinnedPatterns, abstractFile.path);
 							}
 							await this.saveSettings();
 							this.rebuildPinFilter();
@@ -201,16 +195,10 @@ export default class OhUtilsPlugin extends Plugin {
 							.onClick(async () => {
 								if (isTabPinned) {
 									this.log('[tab-pin] unpin:', abstractFile.path);
-									this.settings.tabPinnedPaths = this.settings.tabPinnedPaths
-										.split('\n')
-										.filter(line => line.trim() !== abstractFile.path)
-										.join('\n');
+									this.settings.tabPinnedPaths = this.removePatternLine(this.settings.tabPinnedPaths, abstractFile.path);
 								} else {
 									this.log('[tab-pin] pin:', abstractFile.path);
-									const current = this.settings.tabPinnedPaths.trimEnd();
-									this.settings.tabPinnedPaths = current
-										? current + '\n' + abstractFile.path
-										: abstractFile.path;
+									this.settings.tabPinnedPaths = this.addPatternLine(this.settings.tabPinnedPaths, abstractFile.path);
 								}
 								this.rebuildTabPinFilter();
 								let openLeaf: WorkspaceLeaf | null = null;
@@ -231,20 +219,14 @@ export default class OhUtilsPlugin extends Plugin {
 				let changed = false;
 				if (this.hasExactPinPattern(file.path)) {
 					this.log('[pin] vault delete → remove from pinnedPatterns:', file.path);
-					this.settings.pinnedPatterns = this.settings.pinnedPatterns
-						.split('\n')
-						.filter(line => line.trim() !== file.path)
-						.join('\n');
+					this.settings.pinnedPatterns = this.removePatternLine(this.settings.pinnedPatterns, file.path);
 					this.rebuildPinFilter();
 					this.requestSort();
 					changed = true;
 				}
 				if (this.hasExactTabPin(file.path)) {
 					this.log('[tab-pin] vault delete → remove from tabPinnedPaths:', file.path);
-					this.settings.tabPinnedPaths = this.settings.tabPinnedPaths
-						.split('\n')
-						.filter(line => line.trim() !== file.path)
-						.join('\n');
+					this.settings.tabPinnedPaths = this.removePatternLine(this.settings.tabPinnedPaths, file.path);
 					this.rebuildTabPinFilter();
 					changed = true;
 				}
@@ -256,19 +238,13 @@ export default class OhUtilsPlugin extends Plugin {
 				let changed = false;
 				if (this.hasExactPinPattern(oldPath)) {
 					this.log('[pin] vault rename → update pinnedPatterns:', oldPath, '→', file.path);
-					this.settings.pinnedPatterns = this.settings.pinnedPatterns
-						.split('\n')
-						.map(line => line.trim() === oldPath ? file.path : line)
-						.join('\n');
+					this.settings.pinnedPatterns = this.renamePatternLine(this.settings.pinnedPatterns, oldPath, file.path);
 					this.rebuildPinFilter();
 					changed = true;
 				}
 				if (this.hasExactTabPin(oldPath)) {
 					this.log('[tab-pin] vault rename → update tabPinnedPaths:', oldPath, '→', file.path);
-					this.settings.tabPinnedPaths = this.settings.tabPinnedPaths
-						.split('\n')
-						.map(line => line.trim() === oldPath ? file.path : line)
-						.join('\n');
+					this.settings.tabPinnedPaths = this.renamePatternLine(this.settings.tabPinnedPaths, oldPath, file.path);
 					this.rebuildTabPinFilter();
 					changed = true;
 				}
@@ -385,14 +361,8 @@ export default class OhUtilsPlugin extends Plugin {
 	// ── 탭 핀 ────────────────────────────────────────────────
 
 	rebuildTabPinFilter() {
-		const patterns = this.settings.tabPinnedPaths.trim();
-		if (!patterns) {
-			this.tabPinFilter = null;
-			this.log('[tab-pin] filter cleared');
-			return;
-		}
-		this.tabPinFilter = ignore().add(patterns);
-		this.log('[tab-pin] filter rebuilt, patterns:', patterns.split('\n').filter(Boolean));
+		this.tabPinFilter = this.buildIgnoreFilter(this.settings.tabPinnedPaths);
+		this.log('[tab-pin] filter', this.tabPinFilter ? 'rebuilt' : 'cleared');
 	}
 
 	private hasExactTabPin(path: string): boolean {
@@ -424,15 +394,9 @@ export default class OhUtilsPlugin extends Plugin {
 			pinBtn.addEventListener('click', async (e) => {
 				e.stopPropagation();
 				const currentlyPinned = this.hasExactTabPin(filePath);
-				if (currentlyPinned) {
-					this.settings.tabPinnedPaths = this.settings.tabPinnedPaths
-						.split('\n')
-						.filter(line => line.trim() !== filePath)
-						.join('\n');
-				} else {
-					const current = this.settings.tabPinnedPaths.trimEnd();
-					this.settings.tabPinnedPaths = current ? current + '\n' + filePath : filePath;
-				}
+				this.settings.tabPinnedPaths = currentlyPinned
+					? this.removePatternLine(this.settings.tabPinnedPaths, filePath)
+					: this.addPatternLine(this.settings.tabPinnedPaths, filePath);
 				this.rebuildTabPinFilter();
 				leaf.setPinned(!currentlyPinned);
 				pinBtn.toggleClass('is-active', !currentlyPinned);
@@ -531,29 +495,35 @@ export default class OhUtilsPlugin extends Plugin {
 	}
 
 	rebuildPinFilter() {
-		const patterns = this.settings.pinnedPatterns.trim();
-		if (!patterns) {
-			this.pinFilter = null;
-			this.log('[pin] filter cleared');
-			return;
-		}
-		this.pinFilter = ignore().add(patterns);
-		this.log('[pin] filter rebuilt, patterns:', patterns.split('\n').filter(Boolean));
+		this.pinFilter = this.buildIgnoreFilter(this.settings.pinnedPatterns);
+		this.log('[pin] filter', this.pinFilter ? 'rebuilt' : 'cleared');
 	}
 
 	rebuildHideFilter() {
-		const patterns = this.settings.hidePatterns.trim();
-		if (!patterns) {
-			this.hideFilter = null;
-			this.log('[hide] filter cleared');
-			return;
-		}
-		this.hideFilter = ignore().add(patterns);
-		this.log('[hide] filter rebuilt, patterns:', patterns.split('\n').filter(Boolean));
+		this.hideFilter = this.buildIgnoreFilter(this.settings.hidePatterns);
+		this.log('[hide] filter', this.hideFilter ? 'rebuilt' : 'cleared');
 	}
 
 	private hasExactMatch(patterns: string, path: string): boolean {
 		return patterns.split('\n').some(line => line.trim() === path);
+	}
+
+	private buildIgnoreFilter(patterns: string): Ignore | null {
+		const trimmed = patterns.trim();
+		return trimmed ? ignore().add(trimmed) : null;
+	}
+
+	private addPatternLine(patterns: string, line: string): string {
+		const trimmed = patterns.trimEnd();
+		return trimmed ? trimmed + '\n' + line : line;
+	}
+
+	private removePatternLine(patterns: string, line: string): string {
+		return patterns.split('\n').filter(l => l.trim() !== line).join('\n');
+	}
+
+	private renamePatternLine(patterns: string, oldLine: string, newLine: string): string {
+		return patterns.split('\n').map(l => l.trim() === oldLine ? newLine : l).join('\n');
 	}
 
 	private hasExactPinPattern(filePath: string): boolean {
