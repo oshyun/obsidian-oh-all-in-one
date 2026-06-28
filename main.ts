@@ -25,29 +25,43 @@ interface GlobalHotkey {
 }
 
 interface OhUtilsSettings {
-	autoRevealEnabled: boolean;
 	homeNoteEnabled: boolean;
 	homeNotePath: string;
 	collapseChildrenEnabled: boolean;
+	folderActionsEnabled: boolean;
+	folderActionsShowNewFile: boolean;
+	folderActionsShowExpandAll: boolean;
+	folderActionsShowCollapseAll: boolean;
+	folderActionsShowPin: boolean;
+	folderActionsShowDelete: boolean;
 	pinEnabled: boolean;
 	pinnedPatterns: string;
 	hideEnabled: boolean;
 	hidePatterns: string;
 	globalHotkeysEnabled: boolean;
 	globalHotkeys: GlobalHotkey[];
+	settingsSearchEnabled: boolean;
+	debugMode: boolean;
 }
 
 const DEFAULT_SETTINGS: OhUtilsSettings = {
-	autoRevealEnabled: true,
 	homeNoteEnabled: false,
 	homeNotePath: '',
 	collapseChildrenEnabled: true,
+	folderActionsEnabled: false,
+	folderActionsShowNewFile: true,
+	folderActionsShowExpandAll: true,
+	folderActionsShowCollapseAll: true,
+	folderActionsShowPin: true,
+	folderActionsShowDelete: false,
 	pinEnabled: true,
 	pinnedPatterns: '',
 	hideEnabled: false,
 	hidePatterns: '',
 	globalHotkeysEnabled: false,
 	globalHotkeys: [],
+	settingsSearchEnabled: true,
+	debugMode: false,
 };
 
 export default class OhUtilsPlugin extends Plugin {
@@ -55,20 +69,16 @@ export default class OhUtilsPlugin extends Plugin {
 	private openingHomeNote = false;
 	private sortPatcher: (() => void) | null = null;
 	private pinObserver: MutationObserver | null = null;
-	private debouncedApplyPinIcons = debounce(() => this.applyPinIcons(), 50, true);
+	private debouncedApplyExplorer = debounce(() => { this.applyPinIcons(); this.applyFolderActionButtons(); }, 50, true);
 	private pinFilter: Ignore | null = null;
 	private hideFilter: Ignore | null = null;
 
+	log(...args: unknown[]) {
+		if (this.settings.debugMode) console.log('[oh-utils]', ...args);
+	}
+
 	async onload() {
 		await this.loadSettings();
-
-		// 노트 열 때 파일 탐색기 자동 reveal
-		this.registerEvent(
-			this.app.workspace.on('file-open', (file: TFile | null) => {
-				if (!this.settings.autoRevealEnabled || !file) return;
-				this.revealActiveFile();
-			})
-		);
 
 		// 마지막 탭 닫을 때 홈 노트로 이동
 		this.registerEvent(
@@ -76,9 +86,17 @@ export default class OhUtilsPlugin extends Plugin {
 				if (!this.settings.homeNoteEnabled || !this.settings.homeNotePath) return;
 				if (this.openingHomeNote) return;
 
-				const openLeaves = this.app.workspace.getLeavesOfType('markdown');
-				if (openLeaves.length > 0) return;
+				// getLeavesOfType('markdown') 대신 iterateAllLeaves를 쓴다.
+				// getLeavesOfType은 PDF·캔버스·이미지 등 비마크다운 파일을 무시하므로,
+				// 그 파일만 남아 있을 때도 홈 노트를 강제로 열어 버린다.
+				let hasOpenFile = false;
+				this.app.workspace.iterateAllLeaves((leaf) => {
+					if ((leaf.view as any)?.file) hasOpenFile = true;
+				});
+				this.log('[home-note] layout-change, has open file:', hasOpenFile);
+				if (hasOpenFile) return;
 
+				this.log('[home-note] all tabs closed → opening:', this.settings.homeNotePath);
 				this.openingHomeNote = true;
 				this.app.workspace
 					.openLinkText(normalizePath(this.settings.homeNotePath), '')
@@ -100,6 +118,7 @@ export default class OhUtilsPlugin extends Plugin {
 			event.preventDefault();
 			event.stopPropagation();
 
+			this.log('[collapse] Alt+click on folder');
 			this.collapseFolderByEl(navFolderEl);
 		}, true);
 
@@ -111,7 +130,10 @@ export default class OhUtilsPlugin extends Plugin {
 						item
 							.setTitle('하위 폴더 전부 닫기')
 							.setIcon('chevrons-down-up')
-							.onClick(() => this.collapseFolderByPath(abstractFile.path));
+							.onClick(() => {
+								this.log('[collapse] context menu → collapse:', abstractFile.path);
+								this.collapseFolderByPath(abstractFile.path);
+							});
 					});
 				}
 
@@ -123,12 +145,14 @@ export default class OhUtilsPlugin extends Plugin {
 						.setIcon(isPinned ? 'pin-off' : 'pin')
 						.onClick(async () => {
 							if (isPinned) {
+								this.log('[pin] unpin:', abstractFile.path);
 								this.settings.pinnedPatterns = this.settings.pinnedPatterns
 									.split('\n')
 									.filter(line => line.trim() !== abstractFile.path)
 									.join('\n');
 								this.removePinIcon(abstractFile.path);
 							} else {
+								this.log('[pin] pin:', abstractFile.path);
 								const current = this.settings.pinnedPatterns.trimEnd();
 								this.settings.pinnedPatterns = current
 									? current + '\n' + abstractFile.path
@@ -146,6 +170,7 @@ export default class OhUtilsPlugin extends Plugin {
 		this.registerEvent(
 			this.app.vault.on('delete', (file: TAbstractFile) => {
 				if (!this.hasExactPinPattern(file.path)) return;
+				this.log('[pin] vault delete → remove from pinnedPatterns:', file.path);
 				this.settings.pinnedPatterns = this.settings.pinnedPatterns
 					.split('\n')
 					.filter(line => line.trim() !== file.path)
@@ -158,6 +183,7 @@ export default class OhUtilsPlugin extends Plugin {
 		this.registerEvent(
 			this.app.vault.on('rename', (file: TAbstractFile, oldPath: string) => {
 				if (!this.hasExactPinPattern(oldPath)) return;
+				this.log('[pin] vault rename → update pinnedPatterns:', oldPath, '→', file.path);
 				this.settings.pinnedPatterns = this.settings.pinnedPatterns
 					.split('\n')
 					.map(line => line.trim() === oldPath ? file.path : line)
@@ -172,6 +198,7 @@ export default class OhUtilsPlugin extends Plugin {
 			this.rebuildHideFilter();
 			this.patchFileExplorerSort();
 			this.applyPinIcons();
+			this.applyFolderActionButtons();
 			this.setupPinObserver();
 			this.registerGlobalHotkeys();
 		});
@@ -183,6 +210,7 @@ export default class OhUtilsPlugin extends Plugin {
 		this.sortPatcher?.();
 		this.pinObserver?.disconnect();
 		this.clearPinDecorations();
+		this.clearFolderActionButtons();
 		this.unregisterGlobalHotkeys();
 	}
 
@@ -195,6 +223,7 @@ export default class OhUtilsPlugin extends Plugin {
 		const proto = Object.getPrototypeOf(fileExplorer);
 		if (!proto.getSortedFolderItems) return;
 
+		this.log('[sort-patch] patching getSortedFolderItems');
 		const plugin = this;
 		this.sortPatcher = around(proto, {
 			getSortedFolderItems(old: (...args: any[]) => any[]) {
@@ -203,6 +232,7 @@ export default class OhUtilsPlugin extends Plugin {
 
 					// 숨기기 필터 적용
 					if (plugin.settings.hideEnabled && plugin.hideFilter) {
+						const before = items.length;
 						items = items.filter(item => {
 							const file = item.file;
 							if (!file) return true;
@@ -211,11 +241,14 @@ export default class OhUtilsPlugin extends Plugin {
 								? file.path + '/'
 								: file.path;
 							try {
-								return !plugin.hideFilter!.ignores(testPath);
+								const hidden = plugin.hideFilter!.ignores(testPath);
+								if (hidden) plugin.log('[hide] hiding:', testPath);
+								return !hidden;
 							} catch {
 								return true;
 							}
 						});
+						if (items.length !== before) plugin.log('[hide] filtered', before - items.length, 'item(s)');
 					}
 
 					// 핀 정렬 적용
@@ -223,11 +256,11 @@ export default class OhUtilsPlugin extends Plugin {
 						const isPinned = (item: any) => {
 							const file = item.file;
 							if (!file) return false;
-							const testPath = file instanceof TFolder ? file.path + '/' : file.path;
-							try { return plugin.pinFilter!.ignores(testPath); }
-							catch { return false; }
+							return plugin.isItemPinned(file.path, file instanceof TFolder);
 						};
-						items = [...items.filter(isPinned), ...items.filter(i => !isPinned(i))];
+						const pinned = items.filter(isPinned);
+						if (pinned.length > 0) plugin.log('[pin] pinned items:', pinned.map((i: any) => i.file?.path));
+						items = [...pinned, ...items.filter(i => !isPinned(i))];
 					}
 
 					return items;
@@ -244,24 +277,48 @@ export default class OhUtilsPlugin extends Plugin {
 		const patterns = this.settings.pinnedPatterns.trim();
 		if (!patterns) {
 			this.pinFilter = null;
+			this.log('[pin] filter cleared');
 			return;
 		}
 		this.pinFilter = ignore().add(patterns);
+		this.log('[pin] filter rebuilt, patterns:', patterns.split('\n').filter(Boolean));
 	}
 
 	rebuildHideFilter() {
 		const patterns = this.settings.hidePatterns.trim();
 		if (!patterns) {
 			this.hideFilter = null;
+			this.log('[hide] filter cleared');
 			return;
 		}
 		this.hideFilter = ignore().add(patterns);
+		this.log('[hide] filter rebuilt, patterns:', patterns.split('\n').filter(Boolean));
 	}
 
 	private hasExactPinPattern(filePath: string): boolean {
 		return this.settings.pinnedPatterns
 			.split('\n')
 			.some(line => line.trim() === filePath);
+	}
+
+	// 아이템 자신이 직접 핀 패턴에 매칭되는지 확인한다.
+	// ignore 패키지는 gitignore 시맨틱 상 부모 폴더가 매칭되면 자식도 true를 반환하므로,
+	// 부모 경로 중 핀 필터에 매칭되는 것이 있으면 "자식으로서 매칭된 것"으로 간주해 제외한다.
+	private isItemPinned(filePath: string, isFolder: boolean): boolean {
+		if (!this.pinFilter) return false;
+		const testPath = isFolder ? filePath + '/' : filePath;
+		try {
+			if (!this.pinFilter.ignores(testPath)) return false;
+			// 조상 폴더 중 핀된 것이 있으면 자식으로서 매칭된 것 — 직접 핀이 아님
+			const parts = filePath.split('/');
+			for (let depth = 1; depth < parts.length; depth++) {
+				const ancestorPath = parts.slice(0, depth).join('/') + '/';
+				if (this.pinFilter.ignores(ancestorPath)) return false;
+			}
+			return true;
+		} catch {
+			return false;
+		}
 	}
 
 	// ── 핀 아이콘 표시 ────────────────────────────────────────
@@ -271,25 +328,21 @@ export default class OhUtilsPlugin extends Plugin {
 		if (!explorerEl) return;
 
 		this.pinObserver?.disconnect();
-		this.pinObserver = new MutationObserver(() => this.debouncedApplyPinIcons());
+		this.pinObserver = new MutationObserver(() => this.debouncedApplyExplorer());
 		this.pinObserver.observe(explorerEl, { childList: true, subtree: true });
 	}
 
-	private applyPinIcons() {
+	applyPinIcons() {
 		const fileExplorer = this.getFileExplorer();
 		if (!fileExplorer?.fileItems) return;
 
 		const fileItems = fileExplorer.fileItems as Record<string, any>;
+		let iconCount = 0;
 
 		for (const [path, item] of Object.entries(fileItems)) {
 			if (!item?.el || !item.file) continue;
 
-			const testPath = item.file instanceof TFolder ? path + '/' : path;
-			let pinned = false;
-			try { pinned = this.pinFilter?.ignores(testPath) ?? false; }
-			catch { pinned = false; }
-
-			if (!pinned) continue;
+			if (!this.isItemPinned(path, item.file instanceof TFolder)) continue;
 
 			(item.el as HTMLElement).classList.add('oh-utils-pinned');
 
@@ -301,7 +354,10 @@ export default class OhUtilsPlugin extends Plugin {
 			setIcon(pinIconEl, 'pin');
 			// collapse indicator보다 앞에 삽입
 			titleEl.insertBefore(pinIconEl, titleEl.firstChild);
+			iconCount++;
 		}
+
+		if (iconCount > 0) this.log('[pin] applied icons to', iconCount, 'item(s)');
 	}
 
 	private removePinIcon(path: string) {
@@ -315,7 +371,7 @@ export default class OhUtilsPlugin extends Plugin {
 		(item.el as HTMLElement).querySelector('.oh-utils-pin-icon')?.remove();
 	}
 
-	private clearPinDecorations() {
+	clearPinDecorations() {
 		document.querySelectorAll('.oh-utils-pin-icon').forEach(el => el.remove());
 		document.querySelectorAll('.oh-utils-pinned').forEach(el => el.classList.remove('oh-utils-pinned'));
 	}
@@ -356,6 +412,175 @@ export default class OhUtilsPlugin extends Plugin {
 		}
 	}
 
+	private expandDescendants(parentPath: string, fileItems: Record<string, any>) {
+		for (const [path, item] of Object.entries(fileItems)) {
+			if (typeof item.setCollapsed !== 'function') continue;
+			if (!(item.file instanceof TFolder)) continue;
+
+			const isSelf = path === parentPath;
+			const isDescendant = parentPath === ''
+				? true
+				: path.startsWith(parentPath + '/');
+
+			if (isSelf || isDescendant) {
+				item.setCollapsed(false, false);
+			}
+		}
+	}
+
+	// ── 폴더 액션 버튼 ─────────────────────────────────────
+
+	applyFolderActionButtons() {
+		if (!this.settings.folderActionsEnabled) return;
+
+		const fileExplorer = this.getFileExplorer();
+		if (!fileExplorer?.fileItems) return;
+
+		const fileItems = fileExplorer.fileItems as Record<string, any>;
+		const {
+			folderActionsShowNewFile,
+			folderActionsShowExpandAll,
+			folderActionsShowCollapseAll,
+			folderActionsShowPin,
+			folderActionsShowDelete,
+			pinEnabled,
+		} = this.settings;
+		const showPin = folderActionsShowPin && pinEnabled;
+		const showDelete = folderActionsShowDelete;
+
+		for (const [, item] of Object.entries(fileItems)) {
+			if (!item?.el || !item.file) continue;
+
+			const isFolder = item.file instanceof TFolder;
+			const isFile = item.file instanceof TFile;
+			if (!isFolder && !isFile) continue;
+
+			// 버튼 표시 여부 판단
+			const hasFolderSpecificButtons = isFolder && (folderActionsShowNewFile || folderActionsShowExpandAll || folderActionsShowCollapseAll);
+			const hasSharedButtons = showPin || showDelete;
+			if (!hasFolderSpecificButtons && !hasSharedButtons) continue;
+
+			const titleEl = item.el.firstChild as HTMLElement | null;
+			if (!titleEl) continue;
+			if (titleEl.querySelector('.oh-utils-item-actions')) continue;
+
+			const actionsEl = createEl('div', { cls: 'oh-utils-item-actions' });
+
+			if (isFolder && folderActionsShowNewFile) {
+				const btn = actionsEl.createEl('button', {
+					cls: 'oh-utils-item-action-btn',
+					attr: { 'aria-label': '새 파일' },
+				});
+				setIcon(btn, 'file-plus');
+				btn.addEventListener('click', async (e) => {
+					e.stopPropagation();
+					e.preventDefault();
+					await this.createNewFileInFolder(item.file as TFolder);
+				});
+			}
+
+			if (isFolder && folderActionsShowExpandAll) {
+				const btn = actionsEl.createEl('button', {
+					cls: 'oh-utils-item-action-btn',
+					attr: { 'aria-label': '모두 펼치기' },
+				});
+				setIcon(btn, 'chevrons-down');
+				btn.addEventListener('click', (e) => {
+					e.stopPropagation();
+					e.preventDefault();
+					this.expandDescendants((item.file as TFolder).path, fileItems);
+				});
+			}
+
+			if (isFolder && folderActionsShowCollapseAll) {
+				const btn = actionsEl.createEl('button', {
+					cls: 'oh-utils-item-action-btn',
+					attr: { 'aria-label': '모두 닫기' },
+				});
+				setIcon(btn, 'chevrons-up');
+				btn.addEventListener('click', (e) => {
+					e.stopPropagation();
+					e.preventDefault();
+					this.collapseFolderByPath((item.file as TFolder).path);
+				});
+			}
+
+			if (showPin) {
+				const pinBtn = actionsEl.createEl('button', { cls: 'oh-utils-item-action-btn' });
+				this.refreshPinButton(pinBtn, item.file.path);
+				pinBtn.addEventListener('click', async (e) => {
+					e.stopPropagation();
+					e.preventDefault();
+					const wasPinned = this.hasExactPinPattern(item.file.path);
+					if (wasPinned) {
+						this.settings.pinnedPatterns = this.settings.pinnedPatterns
+							.split('\n')
+							.filter(line => line.trim() !== item.file.path)
+							.join('\n');
+						this.removePinIcon(item.file.path);
+					} else {
+						const current = this.settings.pinnedPatterns.trimEnd();
+						this.settings.pinnedPatterns = current
+							? current + '\n' + item.file.path
+							: item.file.path;
+					}
+					// 클릭 즉시 아이콘 업데이트 (DOM 재렌더 대기 안 함)
+					this.refreshPinButton(pinBtn, item.file.path);
+					await this.saveSettings();
+					this.rebuildPinFilter();
+					this.requestSort();
+				});
+			}
+
+			if (showDelete) {
+				const btn = actionsEl.createEl('button', {
+					cls: 'oh-utils-item-action-btn oh-utils-item-action-btn--danger',
+					attr: { 'aria-label': '삭제' },
+				});
+				setIcon(btn, 'trash-2');
+				btn.addEventListener('click', async (e) => {
+					e.stopPropagation();
+					e.preventDefault();
+					const name = item.file.name;
+					const confirmed = confirm(`"${name}"을(를) 삭제할까요?`);
+					if (!confirmed) return;
+					await (this.app as any).fileManager.trashFile(item.file);
+				});
+			}
+
+			if (actionsEl.childElementCount === 0) continue;
+			titleEl.appendChild(actionsEl);
+		}
+	}
+
+	private refreshPinButton(btn: HTMLElement, filePath: string) {
+		const isPinned = this.hasExactPinPattern(filePath);
+		btn.setAttribute('aria-label', isPinned ? '핀 해제' : '핀 고정');
+		btn.empty();
+		setIcon(btn, isPinned ? 'pin-off' : 'pin');
+	}
+
+	clearFolderActionButtons() {
+		document.querySelectorAll('.oh-utils-item-actions').forEach(el => el.remove());
+	}
+
+	refreshFolderActionButtons() {
+		this.clearFolderActionButtons();
+		this.applyFolderActionButtons();
+	}
+
+	private async createNewFileInFolder(folder: TFolder) {
+		const basePath = folder.path === '' ? '' : folder.path + '/';
+		const newFilePath = (this.app.vault as any).getAvailablePath(basePath + 'Untitled', 'md');
+		const newFile = await this.app.vault.create(newFilePath, '');
+		const leaf = this.app.workspace.getLeaf(false);
+		await leaf.openFile(newFile as TFile);
+		const fileExplorer = this.getFileExplorer();
+		if (fileExplorer?.startRenaming) {
+			setTimeout(() => fileExplorer.startRenaming((newFile as TFile).path), 100);
+		}
+	}
+
 	private getFileExplorer(): any {
 		return this.app.workspace.getLeavesOfType('file-explorer')[0]?.view;
 	}
@@ -372,13 +597,19 @@ export default class OhUtilsPlugin extends Plugin {
 			try {
 				remote.globalShortcut.register(hotkey.accelerator, () => {
 					const win = remote.getCurrentWindow();
+					this.log('[global-hotkey] triggered:', hotkey.accelerator, '→', hotkey.commandId,
+						'| window visible:', win.isVisible());
 					if (!win.isVisible()) win.show();
 					win.focus();
 					const cmd = (this.app as any).commands.commands[hotkey.commandId];
-					if (!cmd) return;
+					if (!cmd) {
+						this.log('[global-hotkey] command not found:', hotkey.commandId);
+						return;
+					}
 					if (cmd.checkCallback) cmd.checkCallback(false);
 					else if (cmd.callback) cmd.callback();
 				});
+				this.log('[global-hotkey] registered:', hotkey.accelerator, '→', hotkey.commandId);
 			} catch {
 				new Notice(`[oh-utils] 단축키 등록 실패: ${hotkey.accelerator}`);
 			}
@@ -395,10 +626,6 @@ export default class OhUtilsPlugin extends Plugin {
 				try { remote.globalShortcut.unregister(hotkey.accelerator); } catch {}
 			}
 		}
-	}
-
-	revealActiveFile() {
-		(this.app as any).commands.executeCommandById('file-explorer:reveal-active-file');
 	}
 
 	async loadSettings() {
@@ -418,8 +645,12 @@ export default class OhUtilsPlugin extends Plugin {
 	}
 }
 
+type SettingsTab = 'general' | 'fileExplorer' | 'debug';
+
 class OhUtilsSettingTab extends PluginSettingTab {
 	plugin: OhUtilsPlugin;
+	private activeTab: SettingsTab = 'general';
+	private searchQuery = '';
 
 	constructor(app: App, plugin: OhUtilsPlugin) {
 		super(app, plugin);
@@ -430,17 +661,125 @@ class OhUtilsSettingTab extends PluginSettingTab {
 		const { containerEl } = this;
 		containerEl.empty();
 
-		// ── 자동 펼치기 ──────────────────────────────────────
-		new Setting(containerEl).setName('자동 펼치기').setHeading();
+		// ── 검색창 ────────────────────────────────────────────
+		if (this.plugin.settings.settingsSearchEnabled) {
+			const searchInput = containerEl.createEl('input', {
+				type: 'search',
+				placeholder: '설정 검색…',
+				cls: 'oh-utils-search-input',
+				attr: { 'aria-label': '설정 검색' },
+			}) as HTMLInputElement;
+			searchInput.value = this.searchQuery;
+
+			const contentEl = containerEl.createDiv();
+			const updateContent = () => {
+				contentEl.empty();
+				if (this.searchQuery) {
+					this.renderSearchResults(contentEl, this.searchQuery.toLowerCase());
+				} else {
+					this.renderTabsContent(contentEl);
+				}
+			};
+
+			// IME 조합 중에는 갱신을 건너뜀 — 한글 자모 깨짐 방지
+			let isComposing = false;
+			searchInput.addEventListener('compositionstart', () => { isComposing = true; });
+			searchInput.addEventListener('compositionend', () => {
+				isComposing = false;
+				this.searchQuery = searchInput.value.trim();
+				updateContent();
+			});
+			searchInput.addEventListener('input', () => {
+				if (isComposing) return;
+				this.searchQuery = searchInput.value.trim();
+				updateContent();
+			});
+
+			updateContent();
+			return;
+		}
+
+		this.renderTabsContent(containerEl);
+	}
+
+	private renderTabsContent(containerEl: HTMLElement): void {
+		// ── 탭 바 ────────────────────────────────────────────
+		const tabBar = containerEl.createDiv({ cls: 'oh-utils-tab-bar' });
+		const tabs: { id: SettingsTab; label: string }[] = [
+			{ id: 'general', label: '일반' },
+			{ id: 'fileExplorer', label: '파일 탐색기' },
+			{ id: 'debug', label: '디버그' },
+		];
+		for (const tab of tabs) {
+			const btn = tabBar.createEl('button', {
+				text: tab.label,
+				cls: 'oh-utils-tab-btn' + (this.activeTab === tab.id ? ' is-active' : ''),
+			});
+			btn.addEventListener('click', () => {
+				this.activeTab = tab.id;
+				this.display();
+			});
+		}
+
+		if (this.activeTab === 'general') {
+			this.renderGeneral(containerEl);
+		} else if (this.activeTab === 'fileExplorer') {
+			this.renderFileExplorer(containerEl);
+		} else if (this.activeTab === 'debug') {
+			this.renderDebug(containerEl);
+		}
+	}
+
+	private renderSearchResults(containerEl: HTMLElement, query: string): void {
+		const tempEl = createDiv();
+		this.renderGeneral(tempEl);
+		this.renderFileExplorer(tempEl);
+		this.renderDebug(tempEl);
+
+		let currentHeadingEl: HTMLElement | null = null;
+		let lastAppendedHeadingEl: HTMLElement | null = null;
+		let matchCount = 0;
+
+		for (const item of Array.from(tempEl.querySelectorAll<HTMLElement>('.setting-item'))) {
+			if (item.classList.contains('setting-item-heading')) {
+				currentHeadingEl = item;
+				continue;
+			}
+			const nameText = item.querySelector('.setting-item-name')?.textContent?.toLowerCase() ?? '';
+			const descText = item.querySelector('.setting-item-description')?.textContent?.toLowerCase() ?? '';
+			if (!nameText.includes(query) && !descText.includes(query)) continue;
+
+			// 이 섹션의 헤딩이 아직 출력되지 않았으면 먼저 표시
+			if (currentHeadingEl && currentHeadingEl !== lastAppendedHeadingEl) {
+				containerEl.appendChild(currentHeadingEl.cloneNode(true));
+				lastAppendedHeadingEl = currentHeadingEl;
+			}
+			containerEl.appendChild(item);
+			matchCount++;
+		}
+
+		if (matchCount === 0) {
+			containerEl.createEl('p', {
+				text: `"${this.searchQuery}"에 해당하는 설정이 없습니다.`,
+				cls: 'oh-utils-search-empty',
+			});
+		}
+	}
+
+	private renderGeneral(containerEl: HTMLElement): void {
+		// ── 설정 탭 ──────────────────────────────────────────
+		new Setting(containerEl).setName('설정 탭').setHeading();
 		new Setting(containerEl)
-			.setName('활성화')
-			.setDesc('노트를 열 때마다 파일 탐색기에서 해당 노트의 위치를 자동으로 펼치고 하이라이트합니다.')
+			.setName('설정 검색')
+			.setDesc('설정 탭 상단에 검색창을 표시합니다. 모든 탭의 설정 항목을 한 번에 검색할 수 있습니다.')
 			.addToggle(toggle =>
 				toggle
-					.setValue(this.plugin.settings.autoRevealEnabled)
+					.setValue(this.plugin.settings.settingsSearchEnabled)
 					.onChange(async (value) => {
-						this.plugin.settings.autoRevealEnabled = value;
+						this.plugin.settings.settingsSearchEnabled = value;
 						await this.plugin.saveSettings();
+						this.searchQuery = '';
+						this.display();
 					})
 			);
 
@@ -470,91 +809,6 @@ class OhUtilsSettingTab extends PluginSettingTab {
 					})
 			);
 
-		// ── 하위 폴더 일괄 접기 ──────────────────────────────
-		new Setting(containerEl).setName('하위 폴더 일괄 접기').setHeading();
-		const collapseDesc = Platform.isMobile
-			? '폴더를 길게 눌러 나오는 메뉴에서 "하위 폴더 전부 닫기"를 선택합니다.'
-			: 'Opt(⌥, Mac) / Alt(Windows)를 누른 채 폴더를 클릭합니다.';
-		new Setting(containerEl)
-			.setName('활성화')
-			.setDesc(collapseDesc)
-			.addToggle(toggle =>
-				toggle
-					.setValue(this.plugin.settings.collapseChildrenEnabled)
-					.onChange(async (value) => {
-						this.plugin.settings.collapseChildrenEnabled = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		// ── 파일 숨기기 ──────────────────────────────────────
-		new Setting(containerEl).setName('파일 숨기기').setHeading();
-		new Setting(containerEl)
-			.setName('활성화')
-			.setDesc('패턴에 매칭되는 파일/폴더를 파일 탐색기에서 숨깁니다.')
-			.addToggle(toggle =>
-				toggle
-					.setValue(this.plugin.settings.hideEnabled)
-					.onChange(async (value) => {
-						this.plugin.settings.hideEnabled = value;
-						await this.plugin.saveSettings();
-						this.plugin.requestSort();
-					})
-			);
-		new Setting(containerEl)
-			.setName('숨길 패턴')
-			.setDesc('.gitignore 형식. 한 줄에 하나씩. 예: *.excalidraw.md, _templates/')
-			.addTextArea(text => {
-				text
-					.setPlaceholder('*.excalidraw.md\n_templates/\n.trash/')
-					.setValue(this.plugin.settings.hidePatterns)
-					.onChange(async (value) => {
-						this.plugin.settings.hidePatterns = value;
-						await this.plugin.saveSettings();
-						this.plugin.rebuildHideFilter();
-						this.plugin.requestSort();
-					});
-				text.inputEl.rows = 6;
-				text.inputEl.style.width = '100%';
-				text.inputEl.style.fontFamily = 'var(--font-monospace)';
-			});
-
-		// ── 핀 고정 ──────────────────────────────────────────
-		new Setting(containerEl).setName('핀 고정').setHeading();
-		new Setting(containerEl)
-			.setName('활성화')
-			.setDesc('파일/폴더를 우클릭(모바일: 길게 누르기)하여 핀 고정하면 해당 폴더 최상단에 노출됩니다.')
-			.addToggle(toggle =>
-				toggle
-					.setValue(this.plugin.settings.pinEnabled)
-					.onChange(async (value) => {
-						this.plugin.settings.pinEnabled = value;
-						await this.plugin.saveSettings();
-						this.plugin.requestSort();
-						if (!value) this.plugin['clearPinDecorations']();
-						else this.plugin['applyPinIcons']();
-					})
-			);
-		new Setting(containerEl)
-			.setName('핀 고정 패턴')
-			.setDesc('.gitignore 형식. 한 줄에 하나씩. 예: Daily/, *.canvas, Projects/Important.md')
-			.addTextArea(text => {
-				text
-					.setPlaceholder('Daily/\nProjects/\n*.canvas')
-					.setValue(this.plugin.settings.pinnedPatterns)
-					.onChange(async (value) => {
-						this.plugin.settings.pinnedPatterns = value;
-						await this.plugin.saveSettings();
-						this.plugin.rebuildPinFilter();
-						this.plugin['clearPinDecorations']();
-						this.plugin['applyPinIcons']();
-						this.plugin.requestSort();
-					});
-				text.inputEl.rows = 6;
-				text.inputEl.style.width = '100%';
-				text.inputEl.style.fontFamily = 'var(--font-monospace)';
-			});
-
 		// ── 글로벌 핫키 ──────────────────────────────────────
 		new Setting(containerEl).setName('글로벌 핫키').setHeading();
 
@@ -578,7 +832,6 @@ class OhUtilsSettingTab extends PluginSettingTab {
 						})
 				);
 
-			// 등록된 핫키 목록
 			const { globalHotkeys } = this.plugin.settings;
 			if (globalHotkeys.length > 0) {
 				const listEl = containerEl.createDiv({ cls: 'oh-utils-hotkey-list' });
@@ -622,6 +875,196 @@ class OhUtilsSettingTab extends PluginSettingTab {
 				);
 		}
 	}
+
+	private renderFileExplorer(containerEl: HTMLElement): void {
+		// ── 핀 고정 ──────────────────────────────────────────
+		new Setting(containerEl).setName('핀 고정').setHeading();
+		new Setting(containerEl)
+			.setName('활성화')
+			.setDesc('파일/폴더를 우클릭(모바일: 길게 누르기)하여 핀 고정하면 해당 폴더 최상단에 노출됩니다.')
+			.addToggle(toggle =>
+				toggle
+					.setValue(this.plugin.settings.pinEnabled)
+					.onChange(async (value) => {
+						this.plugin.settings.pinEnabled = value;
+						await this.plugin.saveSettings();
+						this.plugin.requestSort();
+						if (!value) this.plugin.clearPinDecorations();
+						else this.plugin.applyPinIcons();
+					})
+			);
+		new Setting(containerEl)
+			.setName('핀 고정 패턴')
+			.setDesc('.gitignore 형식. 한 줄에 하나씩. 예: Daily/, *.canvas, Projects/Important.md')
+			.addTextArea(text => {
+				text
+					.setPlaceholder('Daily/\nProjects/\n*.canvas')
+					.setValue(this.plugin.settings.pinnedPatterns)
+					.onChange(async (value) => {
+						this.plugin.settings.pinnedPatterns = value;
+						await this.plugin.saveSettings();
+						this.plugin.rebuildPinFilter();
+						this.plugin.clearPinDecorations();
+						this.plugin.applyPinIcons();
+						this.plugin.requestSort();
+					});
+				text.inputEl.rows = 6;
+				text.inputEl.style.width = '100%';
+				text.inputEl.style.fontFamily = 'var(--font-monospace)';
+			});
+
+		// ── 파일 숨기기 ──────────────────────────────────────
+		new Setting(containerEl).setName('파일 숨기기').setHeading();
+		new Setting(containerEl)
+			.setName('활성화')
+			.setDesc('패턴에 매칭되는 파일/폴더를 파일 탐색기에서 숨깁니다.')
+			.addToggle(toggle =>
+				toggle
+					.setValue(this.plugin.settings.hideEnabled)
+					.onChange(async (value) => {
+						this.plugin.settings.hideEnabled = value;
+						await this.plugin.saveSettings();
+						this.plugin.requestSort();
+					})
+			);
+		new Setting(containerEl)
+			.setName('숨길 패턴')
+			.setDesc('.gitignore 형식. 한 줄에 하나씩. 예: *.excalidraw.md, _templates/')
+			.addTextArea(text => {
+				text
+					.setPlaceholder('*.excalidraw.md\n_templates/\n.trash/')
+					.setValue(this.plugin.settings.hidePatterns)
+					.onChange(async (value) => {
+						this.plugin.settings.hidePatterns = value;
+						await this.plugin.saveSettings();
+						this.plugin.rebuildHideFilter();
+						this.plugin.requestSort();
+					});
+				text.inputEl.rows = 6;
+				text.inputEl.style.width = '100%';
+				text.inputEl.style.fontFamily = 'var(--font-monospace)';
+			});
+
+		// ── 하위 폴더 일괄 접기 ──────────────────────────────
+		new Setting(containerEl).setName('하위 폴더 일괄 접기').setHeading();
+		const collapseDesc = Platform.isMobile
+			? '폴더를 길게 눌러 나오는 메뉴에서 "하위 폴더 전부 닫기"를 선택합니다.'
+			: 'Opt(⌥, Mac) / Alt(Windows)를 누른 채 폴더를 클릭합니다.';
+		new Setting(containerEl)
+			.setName('활성화')
+			.setDesc(collapseDesc)
+			.addToggle(toggle =>
+				toggle
+					.setValue(this.plugin.settings.collapseChildrenEnabled)
+					.onChange(async (value) => {
+						this.plugin.settings.collapseChildrenEnabled = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		// ── 폴더 액션 버튼 ───────────────────────────────────
+		new Setting(containerEl).setName('폴더 액션 버튼').setHeading();
+		new Setting(containerEl)
+			.setName('활성화')
+			.setDesc('파일/폴더에 마우스를 올리면 빠른 액션 버튼이 나타납니다.')
+			.addToggle(toggle =>
+				toggle
+					.setValue(this.plugin.settings.folderActionsEnabled)
+					.onChange(async (value) => {
+						this.plugin.settings.folderActionsEnabled = value;
+						await this.plugin.saveSettings();
+						if (value) this.plugin.applyFolderActionButtons();
+						else this.plugin.clearFolderActionButtons();
+						this.display();
+					})
+			);
+
+		if (this.plugin.settings.folderActionsEnabled) {
+			const subEl = containerEl.createDiv({ cls: 'oh-utils-sub-settings' });
+
+			new Setting(subEl)
+				.setName('새 파일')
+				.setDesc('폴더 안에 새 파일을 만듭니다. (폴더 전용)')
+				.addToggle(toggle =>
+					toggle
+						.setValue(this.plugin.settings.folderActionsShowNewFile)
+						.onChange(async (value) => {
+							this.plugin.settings.folderActionsShowNewFile = value;
+							await this.plugin.saveSettings();
+							this.plugin.refreshFolderActionButtons();
+						})
+				);
+
+			new Setting(subEl)
+				.setName('모두 펼치기')
+				.setDesc('하위 폴더를 전부 펼칩니다. (폴더 전용)')
+				.addToggle(toggle =>
+					toggle
+						.setValue(this.plugin.settings.folderActionsShowExpandAll)
+						.onChange(async (value) => {
+							this.plugin.settings.folderActionsShowExpandAll = value;
+							await this.plugin.saveSettings();
+							this.plugin.refreshFolderActionButtons();
+						})
+				);
+
+			new Setting(subEl)
+				.setName('모두 닫기')
+				.setDesc('하위 폴더를 전부 접습니다. (폴더 전용)')
+				.addToggle(toggle =>
+					toggle
+						.setValue(this.plugin.settings.folderActionsShowCollapseAll)
+						.onChange(async (value) => {
+							this.plugin.settings.folderActionsShowCollapseAll = value;
+							await this.plugin.saveSettings();
+							this.plugin.refreshFolderActionButtons();
+						})
+				);
+
+			new Setting(subEl)
+				.setName('핀 고정/해제')
+				.setDesc('파일과 폴더 모두에 표시됩니다. 핀 고정 기능이 꺼져 있으면 동작하지 않습니다.')
+				.addToggle(toggle =>
+					toggle
+						.setValue(this.plugin.settings.folderActionsShowPin)
+						.onChange(async (value) => {
+							this.plugin.settings.folderActionsShowPin = value;
+							await this.plugin.saveSettings();
+							this.plugin.refreshFolderActionButtons();
+						})
+				);
+
+			new Setting(subEl)
+				.setName('삭제')
+				.setDesc('파일과 폴더 모두에 표시됩니다. 클릭 시 확인 후 휴지통으로 이동합니다.')
+				.addToggle(toggle =>
+					toggle
+						.setValue(this.plugin.settings.folderActionsShowDelete)
+						.onChange(async (value) => {
+							this.plugin.settings.folderActionsShowDelete = value;
+							await this.plugin.saveSettings();
+							this.plugin.refreshFolderActionButtons();
+						})
+				);
+		}
+	}
+
+	private renderDebug(containerEl: HTMLElement): void {
+		new Setting(containerEl).setName('디버그').setHeading();
+		new Setting(containerEl)
+			.setName('디버그 모드')
+			.setDesc('각 기능의 동작을 브라우저 콘솔(Ctrl+Shift+I)에 verbose하게 출력합니다.')
+			.addToggle(toggle =>
+				toggle
+					.setValue(this.plugin.settings.debugMode)
+					.onChange(async (value) => {
+						this.plugin.settings.debugMode = value;
+						await this.plugin.saveSettings();
+						if (value) console.log('[oh-utils] debug mode enabled');
+					})
+			);
+	}
+
 }
 
 // ── 글로벌 핫키 헬퍼 ─────────────────────────────────────────────
