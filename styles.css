@@ -278,6 +278,7 @@
 
 .oh-aio-tab-pin-btn.is-active {
 	color: var(--interactive-accent);
+	filter: drop-shadow(0 0 3px hsla(var(--accent-h), var(--accent-s), var(--accent-l), 0.7));
 }
 
 .oh-aio-tab-pin-btn svg {
@@ -285,8 +286,9 @@
 	height: 12px;
 }
 
-.oh-aio-tab-pinned {
-	background-color: hsla(var(--accent-h), var(--accent-s), var(--accent-l), 0.2) !important;
+.oh-aio-tab-pin-btn.is-active svg {
+	width: 14px;
+	height: 14px;
 }
 
 /* ── 서브 설정 들여쓰기 ── */
