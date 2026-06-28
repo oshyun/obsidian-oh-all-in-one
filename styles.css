@@ -285,6 +285,10 @@
 	height: 12px;
 }
 
+.oh-aio-tab-pinned .workspace-tab-header-inner-close-button {
+	display: none;
+}
+
 /* ── 서브 설정 들여쓰기 ── */
 .oh-aio-sub-settings {
 	border-left: 2px solid var(--background-modifier-border);
