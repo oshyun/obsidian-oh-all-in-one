@@ -11,10 +11,10 @@
 |---|---|
 | 플러그인 ID | `oh-all-in-one` |
 | 플러그인 이름 | `0h All In One` (UI 노출용, 정렬 목적으로 `0h`로 시작) |
-| 작성자 | oshyun (``) |
+| 작성자 | oshyun |
 | 버전 포맷 | `0.0.x` — 패치마다 최하위 숫자 증가 |
 | 진입점 | `main.ts` → 빌드 결과: `main.js` |
-| 배포 경로 | `$PLUGIN_DEPLOY_PATH/` |
+| 배포 경로 | `$PLUGIN_DEPLOY_PATH` (`.env` 참조) |
 | 모바일 지원 | `isDesktopOnly: false` |
 
 ## 버전 관리 규칙
@@ -30,12 +30,12 @@
 > **머지와 배포는 같은 단계에서 한다.** 머지 완료 즉시 빌드 후 배포까지 이어서 실행한다. 머지만 하고 배포를 미루지 않는다.
 
 ```bash
-# nvm 활성화 후 빌드 (nvm은 매번 명시적으로 source 필요)
+# .env 로드 후 빌드
+source .env
 export NVM_DIR="$HOME/.nvm" && source "$NVM_DIR/nvm.sh" && npm run build
 
 # 배포
-cp main.js styles.css manifest.json \
-  $PLUGIN_DEPLOY_PATH/
+cp main.js styles.css manifest.json "$PLUGIN_DEPLOY_PATH/"
 ```
 
 ### worktree에서 빌드할 때
@@ -45,10 +45,8 @@ worktree는 `node_modules`가 없으므로 빌드 전 symlink가 필요하다.
 
 ```bash
 # 워크트리 생성 직후 한 번만 실행
-ln -s $REPO_PATH/node_modules \
-  ../<repo>-wt-<topic>/node_modules
-ln -s $REPO_PATH/tsconfig.json \
-  ../<repo>-wt-<topic>/tsconfig.json
+ln -s "$REPO_PATH/node_modules" ../<repo>-wt-<topic>/node_modules
+ln -s "$REPO_PATH/tsconfig.json" ../<repo>-wt-<topic>/tsconfig.json
 ```
 
 `git worktree remove --force`로 제거해야 symlink가 남아도 경고 없이 삭제된다.
@@ -58,50 +56,13 @@ ln -s $REPO_PATH/tsconfig.json \
 - `monkey-around` ^3.0.0 — Obsidian 내부 메서드 패치
 - `ignore` ^7.0.5 — `.gitignore` 스타일 패턴 매칭
 
-## 설정 인터페이스
-
-```typescript
-interface OhUtilsSettings {
-  homeNoteEnabled: boolean;              // 홈 노트 활성화
-  homeNotePath: string;                  // 홈 노트 경로 (vault 루트 기준)
-  collapseChildrenEnabled: boolean;      // 하위 폴더 일괄 접기
-  folderActionsEnabled: boolean;         // 폴더 액션 버튼
-  folderActionsShowNewFile: boolean;
-  folderActionsShowExpandAll: boolean;
-  folderActionsShowCollapseAll: boolean;
-  folderActionsShowPin: boolean;
-  folderActionsShowDelete: boolean;
-  pinEnabled: boolean;                   // 핀 고정
-  pinnedPatterns: string;                // 줄바꿈 구분 .gitignore 패턴
-  hideEnabled: boolean;                  // 파일 숨기기
-  hidePatterns: string;                  // 줄바꿈 구분 .gitignore 패턴
-  globalHotkeysEnabled: boolean;         // 글로벌 핫키 활성화
-  globalHotkeys: GlobalHotkey[];         // 등록된 핫키 목록
-  settingsSearchEnabled: boolean;        // 설정 검색창
-  deleteEmptyNewNoteEnabled: boolean;    // 빈 새 노트 자동 삭제
-  debugMode: boolean;                    // 디버그 로그
-}
-
-interface GlobalHotkey {
-  id: string;           // Date.now().toString(36)
-  accelerator: string;  // Electron 가속기 문자열 (예: CommandOrControl+Shift+N)
-  commandId: string;    // Obsidian 명령어 ID
-  commandName: string;  // 표시용 명령어 이름
-}
-```
-
 ---
 
-## 기능 목록
+## 기능별 구현 메모
 
 설정 탭은 `setHeading()`으로 섹션을 구분한다. **1기능 = 1섹션** 규칙.
 
----
-
-### 0. 빈 새 노트 자동 삭제 (Delete Empty New Note)
-
-새로 만든 노트에 아무것도 입력하지 않고 다른 탭/파일로 이동하면 해당 노트를 자동으로 삭제한다.
-삭제 직후 10초간 Notice가 표시되며 "되돌리기" 링크로 즉시 복원할 수 있다.
+### 빈 새 노트 자동 삭제 (Delete Empty New Note)
 
 **구현 위치:** `main.ts` — `vault.on('create')`, `vault.on('modify')`, `vault.on('rename')`, `workspace.on('active-leaf-change')`
 
@@ -117,14 +78,11 @@ interface GlobalHotkey {
 
 **삭제 방식:** `app.fileManager.trashFile(file)` — 사용자의 "삭제된 파일" 설정(.trash / 시스템 휴지통)을 따른다.
 
-**설정:**
-- `deleteEmptyNewNoteEnabled: boolean` — 토글 (기본값 `true`, "일반" 탭 > 노트 섹션)
+**설정:** `deleteEmptyNewNoteEnabled: boolean` — 토글 (기본값 `true`, "일반" 탭 > 노트 섹션)
 
 ---
 
-### 1. 핀 고정 (Pin)
-
-파일/폴더를 각 폴더의 최상단에 고정 노출한다. 핀 아이콘이 파일 이름 앞에 표시된다.
+### 핀 고정 (Pin)
 
 **구현 위치:** `main.ts` — `patchFileExplorerSort()`, `applyPinIcons()`, `setupPinObserver()`, `rebuildPinFilter()`, `hasExactPinPattern()`
 
@@ -166,9 +124,7 @@ items = [...items.filter(isPinned), ...items.filter(i => !isPinned(i))];
 
 ---
 
-### 2. 파일 숨기기 (Hide)
-
-`.gitignore` 스타일 글로브 패턴에 매칭되는 파일/폴더를 파일 탐색기에서 숨긴다.
+### 파일 숨기기 (Hide)
 
 **구현 위치:** `main.ts` — `patchFileExplorerSort()`, `rebuildHideFilter()`, `hideFilter: Ignore | null`
 
@@ -179,19 +135,13 @@ items = [...items.filter(isPinned), ...items.filter(i => !isPinned(i))];
 - 폴더는 `path + '/'`로 테스트해 디렉토리 패턴 (`_templates/`) 매칭을 지원한다.
 - 숨기기가 핀보다 먼저 적용된다 (filter → sort 순서).
 
-**패턴 형식:**
-- `.gitignore` 규칙을 그대로 따른다.
-- 예: `*.excalidraw.md`, `_templates/`, `.trash/`
-
 **설정:**
 - `hideEnabled: boolean` — 토글 (변경 시 `requestSort()` 호출)
 - `hidePatterns: string` — textarea, 줄바꿈 구분, 모노스페이스 폰트
 
 ---
 
-### 3. 홈 노트 (Home Note)
-
-모든 탭을 닫으면 지정한 노트를 자동으로 연다.
+### 홈 노트 (Home Note)
 
 **구현 위치:** `main.ts` — `onload()`의 `layout-change` 이벤트 핸들러
 
@@ -207,9 +157,7 @@ items = [...items.filter(isPinned), ...items.filter(i => !isPinned(i))];
 
 ---
 
-### 5. 하위 폴더 일괄 접기 (Collapse Children)
-
-폴더의 하위에 펼쳐진 모든 폴더 트리를 한 번에 닫는다.
+### 하위 폴더 일괄 접기 (Collapse Children)
 
 **구현 위치:** `main.ts` — `onload()`의 `click` DOM 이벤트 핸들러, `file-menu` 이벤트 핸들러, `collapseDescendants()` 메서드
 
@@ -234,9 +182,8 @@ items = [...items.filter(isPinned), ...items.filter(i => !isPinned(i))];
 
 ---
 
-### 6. 글로벌 핫키 (Global Hotkeys)
+### 글로벌 핫키 (Global Hotkeys)
 
-Obsidian이 백그라운드 상태일 때도 시스템 단축키로 Obsidian 명령어를 실행한다.
 **데스크탑 전용** (`Platform.isDesktop` 체크).
 
 **구현 위치:** `main.ts` — `registerGlobalHotkeys()`, `unregisterGlobalHotkeys()`, `GlobalHotkeyModal`, `CommandSuggest`, `keyEventToAccelerator()`, `displayAccelerator()`
@@ -307,21 +254,10 @@ titleEl.insertBefore(pinIconEl, titleEl.firstChild);
 
 ---
 
-## 파일 구조
-
-```
-obsidian-oh-all-in-one/
-├── main.ts          # 전체 플러그인 코드 (단일 파일)
-├── styles.css       # 핀 아이콘, 글로벌 핫키 모달 스타일
-├── manifest.json    # 플러그인 메타데이터
-├── package.json     # 의존성
-├── tsconfig.json    # TypeScript 설정
-├── esbuild.config.mjs
-└── CLAUDE.md        # 이 문서
-```
-
 ## 관련 경로
 
-- **Obsidian Vault**: `$VAULT_PATH`
-- **Bot 레포**: `$BOT_REPO_PATH` (vault와 연동 예정)
-- **플러그인 배포 경로**: `$PLUGIN_DEPLOY_PATH/`
+경로는 `.env`에서 관리한다. `.env.example` 참조.
+
+- `VAULT_PATH` — Obsidian Vault 루트
+- `PLUGIN_DEPLOY_PATH` — 플러그인 배포 경로
+- `REPO_PATH` — 이 레포 로컬 경로
