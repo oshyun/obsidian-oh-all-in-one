@@ -596,7 +596,7 @@ export default class OhUtilsPlugin extends Plugin {
 			this.toggleMobileTabList();
 		});
 		const actionsEl = headerEl.querySelector('.view-actions');
-		if (actionsEl) headerEl.insertBefore(buttonEl, actionsEl);
+		if (actionsEl) actionsEl.insertBefore(buttonEl, actionsEl.firstChild);
 		else headerEl.appendChild(buttonEl);
 		this.mobileTabListHeaderButtonEl = buttonEl;
 	}
