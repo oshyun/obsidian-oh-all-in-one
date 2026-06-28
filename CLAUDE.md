@@ -22,6 +22,8 @@
 
 ## 빌드 및 배포
 
+> **머지와 배포는 같은 단계에서 한다.** 머지 완료 즉시 빌드 후 배포까지 이어서 실행한다. 머지만 하고 배포를 미루지 않는다.
+
 ```bash
 # nvm 활성화 후 빌드 (nvm은 매번 명시적으로 source 필요)
 export NVM_DIR="$HOME/.nvm" && source "$NVM_DIR/nvm.sh" && npm run build
