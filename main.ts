@@ -1070,7 +1070,7 @@ export default class OhUtilsPlugin extends Plugin {
 	}
 }
 
-type SettingsTab = 'general' | 'homeNote' | 'fileExplorer' | 'globalHotkeys';
+type SettingsTab = 'general' | 'note' | 'tab' | 'fileExplorer' | 'globalHotkeys';
 
 class OhUtilsSettingTab extends PluginSettingTab {
 	plugin: OhUtilsPlugin;
@@ -1132,7 +1132,8 @@ class OhUtilsSettingTab extends PluginSettingTab {
 		const tabBar = containerEl.createDiv({ cls: 'oh-aio-tab-bar' });
 		const tabs: { id: SettingsTab; label: string }[] = [
 			{ id: 'general', label: '일반' },
-			{ id: 'homeNote', label: '홈 노트' },
+			{ id: 'note', label: '노트' },
+			{ id: 'tab', label: '탭' },
 			{ id: 'fileExplorer', label: '파일 탐색기' },
 			{ id: 'globalHotkeys', label: '글로벌 핫키' },
 		];
@@ -1149,8 +1150,10 @@ class OhUtilsSettingTab extends PluginSettingTab {
 
 		if (this.activeTab === 'general') {
 			this.renderGeneral(containerEl);
-		} else if (this.activeTab === 'homeNote') {
-			this.renderHomeNote(containerEl);
+		} else if (this.activeTab === 'note') {
+			this.renderNote(containerEl);
+		} else if (this.activeTab === 'tab') {
+			this.renderTab(containerEl);
 		} else if (this.activeTab === 'fileExplorer') {
 			this.renderFileExplorer(containerEl);
 		} else if (this.activeTab === 'globalHotkeys') {
@@ -1161,7 +1164,8 @@ class OhUtilsSettingTab extends PluginSettingTab {
 	private renderSearchResults(containerEl: HTMLElement, query: string): void {
 		const tempEl = createDiv();
 		this.renderGeneral(tempEl);
-		this.renderHomeNote(tempEl);
+		this.renderNote(tempEl);
+		this.renderTab(tempEl);
 		this.renderFileExplorer(tempEl);
 		this.renderGlobalHotkeys(tempEl);
 
@@ -1212,10 +1216,27 @@ class OhUtilsSettingTab extends PluginSettingTab {
 					})
 			);
 
-		// ── 노트 ─────────────────────────────────────────────
-		new Setting(containerEl).setName('노트').setHeading();
+		// ── 디버그 ───────────────────────────────────────────
+		new Setting(containerEl).setName('디버그').setHeading();
 		new Setting(containerEl)
-			.setName('빈 새 노트 자동 삭제')
+			.setName('디버그 모드')
+			.setDesc('각 기능의 동작을 브라우저 콘솔(Ctrl+Shift+I)에 verbose하게 출력합니다.')
+			.addToggle(toggle =>
+				toggle
+					.setValue(this.plugin.settings.debugMode)
+					.onChange(async (value) => {
+						this.plugin.settings.debugMode = value;
+						await this.plugin.saveSettings();
+						if (value) console.log('[oh-utils] debug mode enabled');
+					})
+			);
+	}
+
+	private renderNote(containerEl: HTMLElement): void {
+		// ── 빈 새 노트 자동 삭제 ─────────────────────────────
+		new Setting(containerEl).setName('빈 새 노트 자동 삭제').setHeading();
+		new Setting(containerEl)
+			.setName('활성화')
 			.setDesc('새로 만든 노트에 아무것도 입력하지 않고 다른 곳으로 이동하면 노트를 자동으로 삭제합니다. 삭제 직후 알림에서 되돌리기 할 수 있습니다.')
 			.addToggle(toggle =>
 				toggle
@@ -1225,6 +1246,37 @@ class OhUtilsSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					})
 			);
+
+		// ── 홈 노트 ──────────────────────────────────────────
+		new Setting(containerEl).setName('홈 노트').setHeading();
+		new Setting(containerEl)
+			.setName('활성화')
+			.setDesc('모든 탭을 닫으면 지정한 노트를 자동으로 엽니다.')
+			.addToggle(toggle =>
+				toggle
+					.setValue(this.plugin.settings.homeNoteEnabled)
+					.onChange(async (value) => {
+						this.plugin.settings.homeNoteEnabled = value;
+						await this.plugin.saveSettings();
+					})
+			);
+		new Setting(containerEl)
+			.setName('노트 경로')
+			.setDesc('Vault 루트 기준 경로. 예: Home.md, Daily/Home.md')
+			.addText(text =>
+				text
+					.setPlaceholder('Home.md')
+					.setValue(this.plugin.settings.homeNotePath)
+					.onChange(async (value) => {
+						this.plugin.settings.homeNotePath = value.trim();
+						await this.plugin.saveSettings();
+					})
+			);
+	}
+
+	private renderTab(containerEl: HTMLElement): void {
+		// ── 탭 동작 ──────────────────────────────────────────
+		new Setting(containerEl).setName('탭 동작').setHeading();
 		new Setting(containerEl)
 			.setName('중복 탭 방지')
 			.setDesc('이미 열려 있는 파일을 다시 열면 새 탭을 만들지 않고 기존 탭으로 이동합니다.')
@@ -1259,6 +1311,41 @@ class OhUtilsSettingTab extends PluginSettingTab {
 					})
 			);
 
+		// ── 탭 핀 ──────────────────────────────────────────────
+		new Setting(containerEl).setName('탭 핀').setHeading();
+		new Setting(containerEl)
+			.setName('활성화')
+			.setDesc('탭 핀 고정된 파일은 탭을 닫아도 자동으로 다시 열립니다. 파일을 우클릭하거나 탭 핀 버튼으로 설정할 수 있습니다.')
+			.addToggle(toggle =>
+				toggle
+					.setValue(this.plugin.settings.tabPinEnabled)
+					.onChange(async (value) => {
+						this.plugin.settings.tabPinEnabled = value;
+						if (value) {
+							this.plugin.applyTabPinButtons();
+						} else {
+							this.plugin.clearTabPinButtons();
+						}
+						await this.plugin.saveSettings();
+					})
+			);
+		new Setting(containerEl)
+			.setName('탭 핀 패턴')
+			.setDesc('.gitignore 형식. 한 줄에 하나씩. 예: Notes/Home.md, Daily/*.md')
+			.addTextArea(text => {
+				text
+					.setPlaceholder('Notes/Home.md\nDaily/*.md')
+					.setValue(this.plugin.settings.tabPinnedPaths)
+					.onChange(async (value) => {
+						this.plugin.settings.tabPinnedPaths = value;
+						await this.plugin.saveSettings();
+						this.plugin.rebuildTabPinFilter();
+					});
+				text.inputEl.rows = 6;
+				text.inputEl.style.width = '100%';
+				text.inputEl.style.fontFamily = 'var(--font-monospace)';
+			});
+
 		// ── 모바일 탭 목록 ───────────────────────────────────
 		new Setting(containerEl).setName('모바일 탭 목록').setHeading();
 		new Setting(containerEl)
@@ -1272,49 +1359,6 @@ class OhUtilsSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 						if (value) this.plugin.setupMobileTabList();
 						else this.plugin.teardownMobileTabList();
-					})
-			);
-
-		// ── 디버그 ───────────────────────────────────────────
-		new Setting(containerEl).setName('디버그').setHeading();
-		new Setting(containerEl)
-			.setName('디버그 모드')
-			.setDesc('각 기능의 동작을 브라우저 콘솔(Ctrl+Shift+I)에 verbose하게 출력합니다.')
-			.addToggle(toggle =>
-				toggle
-					.setValue(this.plugin.settings.debugMode)
-					.onChange(async (value) => {
-						this.plugin.settings.debugMode = value;
-						await this.plugin.saveSettings();
-						if (value) console.log('[oh-utils] debug mode enabled');
-					})
-			);
-	}
-
-	private renderHomeNote(containerEl: HTMLElement): void {
-		// ── 홈 노트 ──────────────────────────────────────────
-		new Setting(containerEl).setName('홈 노트').setHeading();
-		new Setting(containerEl)
-			.setName('활성화')
-			.setDesc('모든 탭을 닫으면 지정한 노트를 자동으로 엽니다.')
-			.addToggle(toggle =>
-				toggle
-					.setValue(this.plugin.settings.homeNoteEnabled)
-					.onChange(async (value) => {
-						this.plugin.settings.homeNoteEnabled = value;
-						await this.plugin.saveSettings();
-					})
-			);
-		new Setting(containerEl)
-			.setName('노트 경로')
-			.setDesc('Vault 루트 기준 경로. 예: Home.md, Daily/Home.md')
-			.addText(text =>
-				text
-					.setPlaceholder('Home.md')
-					.setValue(this.plugin.settings.homeNotePath)
-					.onChange(async (value) => {
-						this.plugin.settings.homeNotePath = value.trim();
-						await this.plugin.saveSettings();
 					})
 			);
 	}
