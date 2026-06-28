@@ -96,16 +96,28 @@ export default class OhUtilsPlugin extends Plugin {
 				// getLeavesOfType은 PDF·캔버스·이미지 등 비마크다운 파일을 무시하므로,
 				// 그 파일만 남아 있을 때도 홈 노트를 강제로 열어 버린다.
 				let hasOpenFile = false;
+				let existingHomeNoteLeaf: any = null;
+				const homeNoteName = normalizePath(this.settings.homeNotePath);
 				this.app.workspace.iterateAllLeaves((leaf) => {
-					if ((leaf.view as any)?.file) hasOpenFile = true;
+					const leafFile = (leaf.view as any)?.file;
+					if (leafFile) {
+						hasOpenFile = true;
+						if (leafFile.path === homeNoteName) existingHomeNoteLeaf = leaf;
+					}
 				});
 				this.log('[home-note] layout-change, has open file:', hasOpenFile);
 				if (hasOpenFile) return;
 
+				if (existingHomeNoteLeaf) {
+					this.log('[home-note] home note already open → activating existing tab');
+					this.app.workspace.setActiveLeaf(existingHomeNoteLeaf, { focus: true });
+					return;
+				}
+
 				this.log('[home-note] all tabs closed → opening:', this.settings.homeNotePath);
 				this.openingHomeNote = true;
 				this.app.workspace
-					.openLinkText(normalizePath(this.settings.homeNotePath), '')
+					.openLinkText(homeNoteName, '')
 					.finally(() => { this.openingHomeNote = false; });
 			})
 		);
