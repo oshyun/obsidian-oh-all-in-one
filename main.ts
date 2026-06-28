@@ -1256,7 +1256,7 @@ class OhUtilsSettingTab extends PluginSettingTab {
 							this.plugin.refreshFolderActionButtons();
 						})
 				);
-			new Setting(containerEl)
+			new Setting(subEl)
 				.setName('경로 복사')
 				.setDesc('파일과 폴더 모두에 표시됩니다. vault 기준 상대 경로를 클립보드에 복사합니다.')
 				.addToggle(toggle =>
