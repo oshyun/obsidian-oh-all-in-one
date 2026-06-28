@@ -258,7 +258,7 @@
 }
 
 /* ── 탭 핀 버튼 ── */
-.oh-utils-tab-pin-btn {
+.oh-aio-tab-pin-btn {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
@@ -271,16 +271,16 @@
 	transition: opacity 0.1s;
 }
 
-.workspace-tab-header:hover .oh-utils-tab-pin-btn,
-.oh-utils-tab-pin-btn.is-active {
+.workspace-tab-header:hover .oh-aio-tab-pin-btn,
+.oh-aio-tab-pin-btn.is-active {
 	opacity: 1;
 }
 
-.oh-utils-tab-pin-btn.is-active {
+.oh-aio-tab-pin-btn.is-active {
 	color: var(--interactive-accent);
 }
 
-.oh-utils-tab-pin-btn svg {
+.oh-aio-tab-pin-btn svg {
 	width: 12px;
 	height: 12px;
 }
