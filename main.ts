@@ -110,14 +110,13 @@ export default class OhUtilsPlugin extends Plugin {
 				if (!this.settings.homeNoteEnabled || !this.settings.homeNotePath) return;
 				if (this.openingHomeNote) return;
 
-				// getLeavesOfType('markdown') 대신 iterateAllLeaves를 쓴다.
-				// getLeavesOfType은 PDF·캔버스·이미지 등 비마크다운 파일을 무시하므로,
-				// 그 파일만 남아 있을 때도 홈 노트를 강제로 열어 버린다.
+				// iterateRootLeaves: 메인 영역 리프만 순회 (사이드바 패널 제외).
+				// getLeavesOfType('markdown')은 PDF·캔버스·그래프뷰 등 비마크다운을 무시해
+				// 그 파일만 열려 있을 때도 홈 노트를 강제로 열어 버리므로 사용하지 않는다.
 				const homeNoteName = normalizePath(this.settings.homeNotePath);
 				let hasNonHomeNoteFile = false;
 				let existingHomeNoteLeaf: any = null;
-				const rootSplit = (this.app.workspace as any).rootSplit;
-				this.app.workspace.iterateAllLeaves((leaf) => {
+				this.app.workspace.iterateRootLeaves((leaf) => {
 					const leafFile = (leaf.view as any)?.file;
 					if (leafFile) {
 						if (leafFile.path === homeNoteName) {
@@ -127,10 +126,8 @@ export default class OhUtilsPlugin extends Plugin {
 						}
 						return;
 					}
-					// .file 없는 뷰(그래프뷰 등)도 메인 영역에 있으면 콘텐츠로 간주한다.
-					// 사이드바 패널(파일 탐색기, 검색 등)은 rootSplit에 속하지 않아 제외된다.
-					const viewType = leaf.view?.getViewType?.();
-					if (viewType && viewType !== 'empty' && (leaf as any).getRoot() === rootSplit) {
+					// .file 없는 뷰(그래프뷰 등)도 비어있지 않으면 콘텐츠로 간주한다.
+					if (!hasNonHomeNoteFile && leaf.view?.getViewType?.() !== 'empty') {
 						hasNonHomeNoteFile = true;
 					}
 				});
