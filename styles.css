@@ -276,6 +276,7 @@
 	align-items: center;
 	justify-content: center;
 	flex-shrink: 0;
+	color: var(--text-normal);
 }
 
 .oh-aio-mobile-tab-list-btn.is-active {
