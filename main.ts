@@ -401,7 +401,6 @@ export default class OhUtilsPlugin extends Plugin {
 			if (!filePath) return;
 
 			const pinned = this.isTabPinned(filePath);
-			tabHeaderEl.toggleClass('oh-aio-tab-pinned', pinned);
 
 			const existingBtn = tabHeaderEl.querySelector<HTMLElement>('.oh-aio-tab-pin-btn');
 			if (existingBtn) {
@@ -425,7 +424,6 @@ export default class OhUtilsPlugin extends Plugin {
 				this.rebuildTabPinFilter();
 				const newPinned = this.isTabPinned(filePath);
 				pinBtn.toggleClass('is-active', newPinned);
-				tabHeaderEl.toggleClass('oh-aio-tab-pinned', newPinned);
 				await this.saveSettings();
 			});
 
@@ -435,7 +433,6 @@ export default class OhUtilsPlugin extends Plugin {
 
 	clearTabPinButtons() {
 		document.querySelectorAll('.oh-aio-tab-pin-btn').forEach(el => el.remove());
-		document.querySelectorAll('.oh-aio-tab-pinned').forEach(el => el.classList.remove('oh-aio-tab-pinned'));
 	}
 
 	private patchLeafOpenFile() {
