@@ -321,6 +321,12 @@ export default class OhUtilsPlugin extends Plugin {
 			this.registerEvent(this.app.workspace.on('active-leaf-change', () => this.refreshMobileTabList()));
 		});
 
+		this.addCommand({
+			id: 'toggle-mobile-tab-list',
+			name: '모바일 탭 목록 열기/닫기',
+			callback: () => this.toggleMobileTabList(),
+		});
+
 		this.addSettingTab(new OhUtilsSettingTab(this.app, this));
 	}
 
