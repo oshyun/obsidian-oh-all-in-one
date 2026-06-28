@@ -41,6 +41,7 @@ interface OhUtilsSettings {
 	globalHotkeysEnabled: boolean;
 	globalHotkeys: GlobalHotkey[];
 	settingsSearchEnabled: boolean;
+	deleteEmptyNewNoteEnabled: boolean;
 	debugMode: boolean;
 }
 
@@ -61,6 +62,7 @@ const DEFAULT_SETTINGS: OhUtilsSettings = {
 	globalHotkeysEnabled: false,
 	globalHotkeys: [],
 	settingsSearchEnabled: true,
+	deleteEmptyNewNoteEnabled: true,
 	debugMode: false,
 };
 
@@ -72,6 +74,8 @@ export default class OhUtilsPlugin extends Plugin {
 	private debouncedApplyExplorer = debounce(() => { this.applyPinIcons(); this.applyFolderActionButtons(); }, 50, true);
 	private pinFilter: Ignore | null = null;
 	private hideFilter: Ignore | null = null;
+	private newlyCreatedFilePaths = new Set<string>();
+	private previousActiveFilePath: string | null = null;
 
 	log(...args: unknown[]) {
 		if (this.settings.debugMode) console.log('[oh-utils]', ...args);
@@ -193,7 +197,69 @@ export default class OhUtilsPlugin extends Plugin {
 			})
 		);
 
+		// 빈 새 노트 자동 삭제
+		this.registerEvent(
+			this.app.vault.on('create', (file) => {
+				if (!(file instanceof TFile) || file.extension !== 'md') return;
+				this.newlyCreatedFilePaths.add(file.path);
+				this.log('[new-note-cleanup] tracking:', file.path);
+			})
+		);
+		this.registerEvent(
+			this.app.vault.on('modify', (file) => {
+				if (!(file instanceof TFile)) return;
+				if (this.newlyCreatedFilePaths.delete(file.path)) {
+					this.log('[new-note-cleanup] modified, stopped tracking:', file.path);
+				}
+			})
+		);
+		this.registerEvent(
+			this.app.vault.on('rename', (file, oldPath) => {
+				if (this.newlyCreatedFilePaths.delete(oldPath)) {
+					this.log('[new-note-cleanup] renamed, stopped tracking:', oldPath);
+				}
+			})
+		);
+		this.registerEvent(
+			this.app.workspace.on('active-leaf-change', async () => {
+				if (!this.settings.deleteEmptyNewNoteEnabled) return;
+
+				const leavingPath = this.previousActiveFilePath;
+				this.previousActiveFilePath = this.app.workspace.getActiveFile()?.path ?? null;
+
+				if (!leavingPath || !this.newlyCreatedFilePaths.has(leavingPath)) return;
+				this.newlyCreatedFilePaths.delete(leavingPath);
+
+				const file = this.app.vault.getFileByPath(leavingPath);
+				if (!(file instanceof TFile)) return;
+
+				const content = await this.app.vault.read(file);
+				if (content !== '') return;
+
+				this.log('[new-note-cleanup] trashing empty new note:', leavingPath);
+				const fileName = file.basename;
+				const deletedPath = leavingPath;
+				await (this.app as any).fileManager.trashFile(file);
+
+				const fragment = new DocumentFragment();
+				const containerEl = fragment.createEl('span');
+				containerEl.appendText(`빈 노트 "${fileName}" 삭제됨  `);
+				const undoLink = containerEl.createEl('a', { text: '되돌리기' });
+				undoLink.style.cssText = 'cursor:pointer; text-decoration:underline;';
+
+				let notice: Notice;
+				undoLink.addEventListener('click', async (e) => {
+					e.preventDefault();
+					await this.app.vault.create(deletedPath, '');
+					await this.app.workspace.openLinkText(normalizePath(deletedPath), '');
+					notice.hide();
+				});
+				notice = new Notice(fragment, 10000);
+			})
+		);
+
 		this.app.workspace.onLayoutReady(() => {
+			this.previousActiveFilePath = this.app.workspace.getActiveFile()?.path ?? null;
 			this.rebuildPinFilter();
 			this.rebuildHideFilter();
 			this.patchFileExplorerSort();
@@ -784,6 +850,20 @@ class OhUtilsSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 						this.searchQuery = '';
 						this.display();
+					})
+			);
+
+		// ── 노트 ─────────────────────────────────────────────
+		new Setting(containerEl).setName('노트').setHeading();
+		new Setting(containerEl)
+			.setName('빈 새 노트 자동 삭제')
+			.setDesc('새로 만든 노트에 아무것도 입력하지 않고 다른 곳으로 이동하면 노트를 자동으로 삭제합니다. 삭제 직후 알림에서 되돌리기 할 수 있습니다.')
+			.addToggle(toggle =>
+				toggle
+					.setValue(this.plugin.settings.deleteEmptyNewNoteEnabled)
+					.onChange(async (value) => {
+						this.plugin.settings.deleteEmptyNewNoteEnabled = value;
+						await this.plugin.saveSettings();
 					})
 			);
 
