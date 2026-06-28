@@ -645,7 +645,7 @@ export default class OhUtilsPlugin extends Plugin {
 	}
 }
 
-type SettingsTab = 'general' | 'fileExplorer' | 'debug';
+type SettingsTab = 'general' | 'homeNote' | 'fileExplorer' | 'globalHotkeys';
 
 class OhUtilsSettingTab extends PluginSettingTab {
 	plugin: OhUtilsPlugin;
@@ -707,8 +707,9 @@ class OhUtilsSettingTab extends PluginSettingTab {
 		const tabBar = containerEl.createDiv({ cls: 'oh-utils-tab-bar' });
 		const tabs: { id: SettingsTab; label: string }[] = [
 			{ id: 'general', label: '일반' },
+			{ id: 'homeNote', label: '홈 노트' },
 			{ id: 'fileExplorer', label: '파일 탐색기' },
-			{ id: 'debug', label: '디버그' },
+			{ id: 'globalHotkeys', label: '글로벌 핫키' },
 		];
 		for (const tab of tabs) {
 			const btn = tabBar.createEl('button', {
@@ -723,18 +724,21 @@ class OhUtilsSettingTab extends PluginSettingTab {
 
 		if (this.activeTab === 'general') {
 			this.renderGeneral(containerEl);
+		} else if (this.activeTab === 'homeNote') {
+			this.renderHomeNote(containerEl);
 		} else if (this.activeTab === 'fileExplorer') {
 			this.renderFileExplorer(containerEl);
-		} else if (this.activeTab === 'debug') {
-			this.renderDebug(containerEl);
+		} else if (this.activeTab === 'globalHotkeys') {
+			this.renderGlobalHotkeys(containerEl);
 		}
 	}
 
 	private renderSearchResults(containerEl: HTMLElement, query: string): void {
 		const tempEl = createDiv();
 		this.renderGeneral(tempEl);
+		this.renderHomeNote(tempEl);
 		this.renderFileExplorer(tempEl);
-		this.renderDebug(tempEl);
+		this.renderGlobalHotkeys(tempEl);
 
 		let currentHeadingEl: HTMLElement | null = null;
 		let lastAppendedHeadingEl: HTMLElement | null = null;
@@ -783,6 +787,23 @@ class OhUtilsSettingTab extends PluginSettingTab {
 					})
 			);
 
+		// ── 디버그 ───────────────────────────────────────────
+		new Setting(containerEl).setName('디버그').setHeading();
+		new Setting(containerEl)
+			.setName('디버그 모드')
+			.setDesc('각 기능의 동작을 브라우저 콘솔(Ctrl+Shift+I)에 verbose하게 출력합니다.')
+			.addToggle(toggle =>
+				toggle
+					.setValue(this.plugin.settings.debugMode)
+					.onChange(async (value) => {
+						this.plugin.settings.debugMode = value;
+						await this.plugin.saveSettings();
+						if (value) console.log('[oh-utils] debug mode enabled');
+					})
+			);
+	}
+
+	private renderHomeNote(containerEl: HTMLElement): void {
 		// ── 홈 노트 ──────────────────────────────────────────
 		new Setting(containerEl).setName('홈 노트').setHeading();
 		new Setting(containerEl)
@@ -808,7 +829,9 @@ class OhUtilsSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					})
 			);
+	}
 
+	private renderGlobalHotkeys(containerEl: HTMLElement): void {
 		// ── 글로벌 핫키 ──────────────────────────────────────
 		new Setting(containerEl).setName('글로벌 핫키').setHeading();
 
@@ -817,63 +840,64 @@ class OhUtilsSettingTab extends PluginSettingTab {
 				text: '글로벌 핫키는 데스크탑에서만 사용 가능합니다.',
 				cls: 'oh-utils-notice-text',
 			});
-		} else {
-			new Setting(containerEl)
-				.setName('활성화')
-				.setDesc('Obsidian이 백그라운드에 있어도 단축키로 명령어를 실행합니다.')
-				.addToggle(toggle =>
-					toggle
-						.setValue(this.plugin.settings.globalHotkeysEnabled)
-						.onChange(async (value) => {
-							this.plugin.settings.globalHotkeysEnabled = value;
-							await this.plugin.saveSettings();
-							this.plugin.unregisterGlobalHotkeys();
-							if (value) this.plugin.registerGlobalHotkeys();
-						})
-				);
-
-			const { globalHotkeys } = this.plugin.settings;
-			if (globalHotkeys.length > 0) {
-				const listEl = containerEl.createDiv({ cls: 'oh-utils-hotkey-list' });
-				for (const hotkey of globalHotkeys) {
-					const rowEl = listEl.createDiv({ cls: 'oh-utils-hotkey-row' });
-					rowEl.createEl('kbd', {
-						text: displayAccelerator(hotkey.accelerator),
-						cls: 'oh-utils-key-badge',
-					});
-					rowEl.createSpan({ text: hotkey.commandName, cls: 'oh-utils-hotkey-command' });
-					const delBtn = rowEl.createEl('button', { text: '삭제', cls: 'oh-utils-hotkey-delete' });
-					delBtn.addEventListener('click', async () => {
-						this.plugin.unregisterGlobalHotkeys();
-						this.plugin.settings.globalHotkeys = globalHotkeys.filter(h => h.id !== hotkey.id);
-						await this.plugin.saveSettings();
-						this.plugin.registerGlobalHotkeys();
-						this.display();
-					});
-				}
-			}
-
-			new Setting(containerEl)
-				.addButton(btn =>
-					btn
-						.setButtonText('+ 단축키 추가')
-						.setCta()
-						.onClick(() => {
-							new GlobalHotkeyModal(this.plugin.app, async (accelerator, commandId, commandName) => {
-								this.plugin.unregisterGlobalHotkeys();
-								this.plugin.settings.globalHotkeys.push({
-									id: Date.now().toString(36),
-									accelerator,
-									commandId,
-									commandName,
-								});
-								await this.plugin.saveSettings();
-								this.plugin.registerGlobalHotkeys();
-								this.display();
-							}).open();
-						})
-				);
+			return;
 		}
+
+		new Setting(containerEl)
+			.setName('활성화')
+			.setDesc('Obsidian이 백그라운드에 있어도 단축키로 명령어를 실행합니다.')
+			.addToggle(toggle =>
+				toggle
+					.setValue(this.plugin.settings.globalHotkeysEnabled)
+					.onChange(async (value) => {
+						this.plugin.settings.globalHotkeysEnabled = value;
+						await this.plugin.saveSettings();
+						this.plugin.unregisterGlobalHotkeys();
+						if (value) this.plugin.registerGlobalHotkeys();
+					})
+			);
+
+		const { globalHotkeys } = this.plugin.settings;
+		if (globalHotkeys.length > 0) {
+			const listEl = containerEl.createDiv({ cls: 'oh-utils-hotkey-list' });
+			for (const hotkey of globalHotkeys) {
+				const rowEl = listEl.createDiv({ cls: 'oh-utils-hotkey-row' });
+				rowEl.createEl('kbd', {
+					text: displayAccelerator(hotkey.accelerator),
+					cls: 'oh-utils-key-badge',
+				});
+				rowEl.createSpan({ text: hotkey.commandName, cls: 'oh-utils-hotkey-command' });
+				const delBtn = rowEl.createEl('button', { text: '삭제', cls: 'oh-utils-hotkey-delete' });
+				delBtn.addEventListener('click', async () => {
+					this.plugin.unregisterGlobalHotkeys();
+					this.plugin.settings.globalHotkeys = globalHotkeys.filter(h => h.id !== hotkey.id);
+					await this.plugin.saveSettings();
+					this.plugin.registerGlobalHotkeys();
+					this.display();
+				});
+			}
+		}
+
+		new Setting(containerEl)
+			.addButton(btn =>
+				btn
+					.setButtonText('+ 단축키 추가')
+					.setCta()
+					.onClick(() => {
+						new GlobalHotkeyModal(this.plugin.app, async (accelerator, commandId, commandName) => {
+							this.plugin.unregisterGlobalHotkeys();
+							this.plugin.settings.globalHotkeys.push({
+								id: Date.now().toString(36),
+								accelerator,
+								commandId,
+								commandName,
+							});
+							await this.plugin.saveSettings();
+							this.plugin.registerGlobalHotkeys();
+							this.display();
+						}).open();
+					})
+			);
 	}
 
 	private renderFileExplorer(containerEl: HTMLElement): void {
@@ -1047,22 +1071,6 @@ class OhUtilsSettingTab extends PluginSettingTab {
 						})
 				);
 		}
-	}
-
-	private renderDebug(containerEl: HTMLElement): void {
-		new Setting(containerEl).setName('디버그').setHeading();
-		new Setting(containerEl)
-			.setName('디버그 모드')
-			.setDesc('각 기능의 동작을 브라우저 콘솔(Ctrl+Shift+I)에 verbose하게 출력합니다.')
-			.addToggle(toggle =>
-				toggle
-					.setValue(this.plugin.settings.debugMode)
-					.onChange(async (value) => {
-						this.plugin.settings.debugMode = value;
-						await this.plugin.saveSettings();
-						if (value) console.log('[oh-utils] debug mode enabled');
-					})
-			);
 	}
 
 }
