@@ -2,6 +2,7 @@ import {
 	AbstractInputSuggest,
 	App,
 	debounce,
+	Menu,
 	Modal,
 	Notice,
 	Platform,
@@ -46,6 +47,10 @@ interface OhUtilsSettings {
 	globalHotkeys: GlobalHotkey[];
 	settingsSearchEnabled: boolean;
 	deleteEmptyNewNoteEnabled: boolean;
+	noDuplicateTabsEnabled: boolean;
+	mobileOpenInNewTabEnabled: boolean;
+	desktopOpenInNewTabEnabled: boolean;
+	mobileTabListEnabled: boolean;
 	debugMode: boolean;
 }
 
@@ -70,6 +75,10 @@ const DEFAULT_SETTINGS: OhUtilsSettings = {
 	globalHotkeys: [],
 	settingsSearchEnabled: true,
 	deleteEmptyNewNoteEnabled: true,
+	noDuplicateTabsEnabled: true,
+	mobileOpenInNewTabEnabled: true,
+	desktopOpenInNewTabEnabled: false,
+	mobileTabListEnabled: true,
 	debugMode: false,
 };
 
@@ -78,8 +87,14 @@ export default class OhUtilsPlugin extends Plugin {
 	private openingHomeNote = false;
 	private sortPatcher: (() => void) | null = null;
 	private closePatcher: (() => void) | null = null;
-	private openPatcher: (() => void) | null = null;
+	private leafOpenFilePatcher: (() => void) | null = null;
+	private detachingDuplicateLeaf = false;
 	private reopeningTabPinnedFiles = false;
+	private mobileTabListPanelEl: HTMLElement | null = null;
+	private mobileTabListBackdropEl: HTMLElement | null = null;
+	private mobileTabListHeaderButtonEl: HTMLElement | null = null;
+	private mobileTabListIsOpen = false;
+	private mobileTabListAttachedToContainerEl: HTMLElement | null = null;
 	private pinObserver: MutationObserver | null = null;
 	private debouncedApplyExplorer = debounce(() => { this.applyPinIcons(); this.applyFolderActionButtons(); }, 50, true);
 	private pinFilter: Ignore | null = null;
@@ -329,21 +344,25 @@ export default class OhUtilsPlugin extends Plugin {
 			this.rebuildTabPinFilter();
 			this.patchFileExplorerSort();
 			this.patchLeafClose();
-			this.patchLeafOpen();
+			this.patchLeafOpenFile();
 			this.applyPinIcons();
 			this.applyFolderActionButtons();
 			this.applyTabPinButtons();
 			this.setupPinObserver();
 			this.registerGlobalHotkeys();
 			this.reopenTabPinnedFiles();
+			this.setupMobileTabList();
 			this.registerEvent(
 				this.app.workspace.on('layout-change', () => {
 					if (this.settings.tabPinEnabled) {
 						this.applyTabPinButtons();
 						if (!this.reopeningTabPinnedFiles) this.reopenTabPinnedFiles();
 					}
+					this.refreshMobileTabList();
 				})
 			);
+			this.registerEvent(this.app.workspace.on('active-leaf-change', () => this.refreshMobileTabList()));
+			this.registerEvent(this.app.workspace.on('file-open', () => this.refreshMobileTabList()));
 		});
 
 		this.addSettingTab(new OhUtilsSettingTab(this.app, this));
@@ -352,11 +371,12 @@ export default class OhUtilsPlugin extends Plugin {
 	async onunload() {
 		this.sortPatcher?.();
 		this.closePatcher?.();
-		this.openPatcher?.();
+		this.leafOpenFilePatcher?.();
 		this.pinObserver?.disconnect();
 		this.clearPinDecorations();
 		this.clearFolderActionButtons();
 		this.clearTabPinButtons();
+		this.teardownMobileTabList();
 		this.unregisterGlobalHotkeys();
 	}
 
@@ -429,11 +449,66 @@ export default class OhUtilsPlugin extends Plugin {
 			detach(old) {
 				return function(this: WorkspaceLeaf) {
 					const filePath = (this.view as any)?.file?.path as string | undefined;
-					if (filePath && plugin.settings.tabPinEnabled && plugin.isTabPinned(filePath)) {
+					if (filePath && plugin.settings.tabPinEnabled && plugin.isTabPinned(filePath) && !plugin.detachingDuplicateLeaf) {
 						new Notice('탭 핀 고정 상태입니다. 핀을 해제해야 닫을 수 있습니다.', 3000);
 						return;
 					}
 					old.call(this);
+				};
+			}
+		});
+	}
+
+	private patchLeafOpenFile() {
+		const plugin = this;
+		this.leafOpenFilePatcher = around(WorkspaceLeaf.prototype, {
+			openFile(old) {
+				return async function(this: WorkspaceLeaf, file: TFile, ...args: any[]) {
+					const currentFilePath = (this.view as any)?.file?.path as string | undefined;
+					if (
+						currentFilePath &&
+						plugin.settings.tabPinEnabled &&
+						plugin.isTabPinned(currentFilePath) &&
+						file.path !== currentFilePath
+					) {
+						const newLeaf = plugin.app.workspace.getLeaf('tab');
+						return (newLeaf as any).openFile(file, ...args);
+					}
+
+					if (
+						currentFilePath &&
+						file.path !== currentFilePath &&
+						(
+							(Platform.isMobile && plugin.settings.mobileOpenInNewTabEnabled) ||
+							(!Platform.isMobile && plugin.settings.desktopOpenInNewTabEnabled)
+						)
+					) {
+						const newLeaf = plugin.app.workspace.getLeaf('tab');
+						return (newLeaf as any).openFile(file, ...args);
+					}
+
+					if (plugin.settings.noDuplicateTabsEnabled) {
+						let existingLeaf: WorkspaceLeaf | null = null;
+						plugin.app.workspace.iterateAllLeaves(otherLeaf => {
+							if (otherLeaf === this) return;
+							if ((otherLeaf.view as any)?.file?.path === file.path) {
+								existingLeaf = otherLeaf;
+							}
+						});
+						if (existingLeaf) {
+							plugin.log('[no-dup] duplicate prevented:', file.path);
+							plugin.app.workspace.setActiveLeaf(existingLeaf, { focus: true });
+							// 현재 리프에 파일이 없는 경우(빈 새 탭)에만 닫는다.
+							// 기존 파일이 있는 리프(모바일 포함)는 닫으면 뷰가 사라지므로 남겨둔다.
+							if (!currentFilePath) {
+								plugin.detachingDuplicateLeaf = true;
+								try { this.detach(); } finally { plugin.detachingDuplicateLeaf = false; }
+							}
+							return;
+						}
+					}
+
+					return old.call(this, file, ...args);
 				};
 			}
 		});
@@ -465,25 +540,282 @@ export default class OhUtilsPlugin extends Plugin {
 		});
 	}
 
-	private patchLeafOpen() {
-		const plugin = this;
-		this.openPatcher = around(WorkspaceLeaf.prototype, {
-			openFile(old) {
-				return function(this: WorkspaceLeaf, file: TFile, state?: unknown) {
-					if (plugin.settings.tabPinEnabled && plugin.isTabPinned(file.path)) {
-						const existingLeaf = plugin.app.workspace.getLeavesOfType('markdown')
-							.find(leaf => leaf !== this && (leaf.view as any)?.file?.path === file.path) ?? null;
-						if (existingLeaf) {
-							plugin.log('[tab-pin] duplicate open blocked, activating existing tab:', file.path);
-							plugin.app.workspace.setActiveLeaf(existingLeaf, { focus: true });
-							setTimeout(() => this.detach(), 0);
-							return Promise.resolve();
-						}
-					}
-					return old.call(this, file, state);
-				};
+	// ── 모바일 탭 목록 ───────────────────────────────────────
+
+	setupMobileTabList(): void {
+		if (!this.settings.mobileTabListEnabled) return;
+		this.refreshMobileTabList();
+	}
+
+	teardownMobileTabList(): void {
+		this.mobileTabListHeaderButtonEl?.remove();
+		this.mobileTabListPanelEl?.remove();
+		this.mobileTabListBackdropEl?.remove();
+		this.mobileTabListHeaderButtonEl = null;
+		this.mobileTabListPanelEl = null;
+		this.mobileTabListBackdropEl = null;
+		this.mobileTabListAttachedToContainerEl = null;
+		this.mobileTabListIsOpen = false;
+	}
+
+	refreshMobileTabList(): void {
+		if (!this.settings.mobileTabListEnabled) return;
+
+		const leaf = this.app.workspace.getMostRecentLeaf();
+		const containerEl = (leaf?.view as any)?.containerEl as HTMLElement | undefined;
+		if (!containerEl) return;
+
+		if (containerEl !== this.mobileTabListAttachedToContainerEl) {
+			this.mobileTabListHeaderButtonEl?.remove();
+			this.mobileTabListHeaderButtonEl = null;
+			this.mobileTabListIsOpen = false;
+			this.mobileTabListAttachedToContainerEl = containerEl;
+
+			const headerEl = containerEl.querySelector('.view-header') as HTMLElement | null;
+			if (headerEl) this.attachMobileTabListButton(headerEl);
+		}
+
+		if (this.mobileTabListIsOpen) this.rebuildMobileTabListRows();
+	}
+
+	private attachMobileTabListButton(headerEl: HTMLElement): void {
+		const buttonEl = createEl('div', { cls: 'oh-aio-mobile-tab-list-btn clickable-icon' });
+		setIcon(buttonEl, 'layers-2');
+		buttonEl.setAttribute('aria-label', '탭 목록');
+		buttonEl.addEventListener('click', (e) => {
+			e.stopPropagation();
+			this.toggleMobileTabList();
+		});
+		const actionsEl = headerEl.querySelector('.view-actions');
+		if (actionsEl) headerEl.insertBefore(buttonEl, actionsEl);
+		else headerEl.appendChild(buttonEl);
+		this.mobileTabListHeaderButtonEl = buttonEl;
+	}
+
+	private toggleMobileTabList(): void {
+		if (this.mobileTabListIsOpen) this.closeMobileTabList();
+		else this.openMobileTabList();
+	}
+
+	private openMobileTabList(): void {
+		if (!this.mobileTabListHeaderButtonEl) return;
+
+		if (!this.mobileTabListBackdropEl) {
+			const backdropEl = createEl('div', { cls: 'oh-aio-mobile-tab-backdrop' });
+			backdropEl.addEventListener('click', () => this.closeMobileTabList());
+			document.body.appendChild(backdropEl);
+			this.mobileTabListBackdropEl = backdropEl;
+		}
+		if (!this.mobileTabListPanelEl) {
+			const panelEl = createEl('div', { cls: 'oh-aio-mobile-tab-panel' });
+			document.body.appendChild(panelEl);
+			this.mobileTabListPanelEl = panelEl;
+		}
+
+		const headerEl = this.mobileTabListHeaderButtonEl.closest('.view-header') as HTMLElement | null;
+		if (headerEl) {
+			const headerRect = headerEl.getBoundingClientRect();
+			this.mobileTabListPanelEl.style.top = headerRect.bottom + 'px';
+		}
+
+		this.rebuildMobileTabListRows();
+		this.mobileTabListIsOpen = true;
+		this.mobileTabListPanelEl.addClass('is-open');
+		this.mobileTabListBackdropEl.addClass('is-open');
+		this.mobileTabListHeaderButtonEl.addClass('is-active');
+	}
+
+	private closeMobileTabList(): void {
+		this.mobileTabListIsOpen = false;
+		this.mobileTabListPanelEl?.removeClass('is-open');
+		this.mobileTabListBackdropEl?.removeClass('is-open');
+		this.mobileTabListHeaderButtonEl?.removeClass('is-active');
+	}
+
+	private rebuildMobileTabListRows(): void {
+		if (!this.mobileTabListPanelEl) return;
+		this.mobileTabListPanelEl.empty();
+
+		const activeFile = this.app.workspace.getActiveFile();
+		const rootSplit = (this.app.workspace as any).rootSplit;
+
+		const openLeaves: WorkspaceLeaf[] = [];
+		const seenPaths = new Set<string>();
+		this.app.workspace.iterateAllLeaves(leaf => {
+			if (rootSplit && (leaf as any).getRoot?.() !== rootSplit) return;
+			const file = (leaf.view as any)?.file as TFile | undefined;
+			if (!file || seenPaths.has(file.path)) return;
+			seenPaths.add(file.path);
+			openLeaves.push(leaf);
+		});
+
+		if (openLeaves.length === 0) {
+			this.mobileTabListPanelEl.createEl('div', {
+				cls: 'oh-aio-mobile-tab-empty',
+				text: '열린 탭이 없습니다.',
+			});
+			return;
+		}
+
+		for (const openLeaf of openLeaves) {
+			const file = (openLeaf.view as any).file as TFile;
+			const isActive = file.path === activeFile?.path;
+			const isPinned = this.settings.tabPinEnabled && this.isTabPinned(file.path);
+			this.buildMobileTabRow(this.mobileTabListPanelEl, openLeaf, file, isActive, isPinned);
+		}
+	}
+
+	private buildMobileTabRow(
+		containerEl: HTMLElement,
+		leaf: WorkspaceLeaf,
+		file: TFile,
+		isActive: boolean,
+		isPinned: boolean,
+	): void {
+		const rowEl = createEl('div', { cls: 'oh-aio-mobile-tab-row' });
+		if (isActive) rowEl.addClass('is-active');
+
+		const deleteBackgroundEl = rowEl.createEl('div', { cls: 'oh-aio-mobile-tab-row-delete-bg' });
+		const deleteIconEl = deleteBackgroundEl.createEl('span');
+		setIcon(deleteIconEl, 'trash-2');
+
+		const innerEl = rowEl.createEl('div', { cls: 'oh-aio-mobile-tab-row-inner' });
+
+		if (isPinned) {
+			const pinIconEl = innerEl.createEl('span', { cls: 'oh-aio-mobile-tab-row-pin' });
+			setIcon(pinIconEl, 'pin');
+		}
+
+		const textEl = innerEl.createEl('div', { cls: 'oh-aio-mobile-tab-row-text' });
+		const displayName = file.extension === 'md' ? file.basename : file.name;
+		textEl.createEl('span', { cls: 'oh-aio-mobile-tab-row-name', text: displayName });
+		if (file.parent && file.parent.path !== '/') {
+			textEl.createEl('span', { cls: 'oh-aio-mobile-tab-row-path', text: file.parent.path });
+		}
+
+		containerEl.appendChild(rowEl);
+
+		// 탭 전환
+		innerEl.addEventListener('click', () => {
+			this.app.workspace.setActiveLeaf(leaf, { focus: true });
+			this.closeMobileTabList();
+		});
+
+		// 롱프레스 메뉴
+		let longPressTimer: number | null = null;
+		const cancelLongPress = () => {
+			if (longPressTimer !== null) { clearTimeout(longPressTimer); longPressTimer = null; }
+		};
+		innerEl.addEventListener('touchstart', () => {
+			longPressTimer = window.setTimeout(() => {
+				longPressTimer = null;
+				this.showMobileTabRowMenu(leaf, file, isPinned);
+			}, 500);
+		}, { passive: true });
+		innerEl.addEventListener('touchend', cancelLongPress);
+		innerEl.addEventListener('touchmove', cancelLongPress, { passive: true });
+
+		this.attachMobileTabSwipeToDelete(rowEl, innerEl, leaf, isPinned);
+	}
+
+	private attachMobileTabSwipeToDelete(
+		rowEl: HTMLElement,
+		innerEl: HTMLElement,
+		leaf: WorkspaceLeaf,
+		isPinned: boolean,
+	): void {
+		let touchStartX = 0;
+		let touchCurrentX = 0;
+
+		innerEl.addEventListener('touchstart', (e) => {
+			touchStartX = e.touches[0].clientX;
+			touchCurrentX = touchStartX;
+			innerEl.style.transition = 'none';
+		}, { passive: true });
+
+		innerEl.addEventListener('touchmove', (e) => {
+			touchCurrentX = e.touches[0].clientX;
+			const deltaX = touchCurrentX - touchStartX;
+			if (deltaX < 0) innerEl.style.transform = `translateX(${deltaX}px)`;
+		}, { passive: true });
+
+		innerEl.addEventListener('touchend', () => {
+			const deltaX = touchCurrentX - touchStartX;
+			innerEl.style.transition = '';
+
+			if (deltaX < -80) {
+				if (isPinned) {
+					innerEl.style.transform = '';
+					new Notice('탭 핀 고정 상태입니다. 핀을 해제해야 닫을 수 있습니다.', 3000);
+					return;
+				}
+				innerEl.style.transform = 'translateX(-100%)';
+				const rowHeight = rowEl.offsetHeight;
+				rowEl.style.overflow = 'hidden';
+				rowEl.style.transition = 'height 0.2s ease, opacity 0.15s ease';
+				requestAnimationFrame(() => {
+					rowEl.style.height = rowHeight + 'px';
+					requestAnimationFrame(() => {
+						rowEl.style.height = '0';
+						rowEl.style.opacity = '0';
+					});
+				});
+				setTimeout(() => {
+					leaf.detach();
+					rowEl.remove();
+				}, 200);
+			} else {
+				innerEl.style.transform = '';
 			}
 		});
+	}
+
+	private showMobileTabRowMenu(leaf: WorkspaceLeaf, file: TFile, isPinned: boolean): void {
+		const menu = new Menu();
+
+		if (this.settings.tabPinEnabled) {
+			menu.addItem(item => {
+				item
+					.setTitle(isPinned ? '탭 핀 해제' : '탭 핀 고정')
+					.setIcon(isPinned ? 'pin-off' : 'pin')
+					.onClick(async () => {
+						this.settings.tabPinnedPaths = isPinned
+							? this.removePatternLine(this.settings.tabPinnedPaths, file.path)
+							: this.addPatternLine(this.settings.tabPinnedPaths, file.path);
+						this.rebuildTabPinFilter();
+						this.applyTabPinButtons();
+						await this.saveSettings();
+						if (this.mobileTabListIsOpen) this.rebuildMobileTabListRows();
+					});
+			});
+		}
+
+		menu.addItem(item => {
+			item
+				.setTitle('닫기')
+				.setIcon('x')
+				.onClick(() => {
+					if (isPinned) {
+						new Notice('탭 핀 고정 상태입니다. 핀을 해제해야 닫을 수 있습니다.', 3000);
+						return;
+					}
+					leaf.detach();
+					if (this.mobileTabListIsOpen) this.rebuildMobileTabListRows();
+				});
+		});
+
+		menu.addItem(item => {
+			item
+				.setTitle('탐색기에서 보기')
+				.setIcon('folder-open')
+				.onClick(() => {
+					const fileExplorerPlugin = (this.app as any).internalPlugins?.getPluginById('file-explorer');
+					fileExplorerPlugin?.instance?.revealInFolder?.(file);
+					this.closeMobileTabList();
+				});
+		});
+
+		menu.showAtMouseEvent(new MouseEvent('click'));
 	}
 
 	// ── 핀 정렬 패치 ─────────────────────────────────────────
@@ -880,6 +1212,7 @@ export default class OhUtilsPlugin extends Plugin {
 		return this.app.workspace.getLeavesOfType('file-explorer')[0]?.view;
 	}
 
+
 	// ── 글로벌 핫키 ──────────────────────────────────────────
 
 	registerGlobalHotkeys() {
@@ -1093,6 +1426,55 @@ class OhUtilsSettingTab extends PluginSettingTab {
 					.onChange(async (value) => {
 						this.plugin.settings.deleteEmptyNewNoteEnabled = value;
 						await this.plugin.saveSettings();
+					})
+			);
+		new Setting(containerEl)
+			.setName('중복 탭 방지')
+			.setDesc('이미 열려 있는 파일을 다시 열면 새 탭을 만들지 않고 기존 탭으로 이동합니다.')
+			.addToggle(toggle =>
+				toggle
+					.setValue(this.plugin.settings.noDuplicateTabsEnabled)
+					.onChange(async (value) => {
+						this.plugin.settings.noDuplicateTabsEnabled = value;
+						await this.plugin.saveSettings();
+					})
+			);
+		new Setting(containerEl)
+			.setName('모바일: 새 탭으로 열기')
+			.setDesc('모바일에서 파일을 열 때 현재 탭을 대체하지 않고 새 탭으로 엽니다.')
+			.addToggle(toggle =>
+				toggle
+					.setValue(this.plugin.settings.mobileOpenInNewTabEnabled)
+					.onChange(async (value) => {
+						this.plugin.settings.mobileOpenInNewTabEnabled = value;
+						await this.plugin.saveSettings();
+					})
+			);
+		new Setting(containerEl)
+			.setName('PC: 새 탭으로 열기')
+			.setDesc('PC에서 파일을 열 때 현재 탭을 대체하지 않고 새 탭으로 엽니다.')
+			.addToggle(toggle =>
+				toggle
+					.setValue(this.plugin.settings.desktopOpenInNewTabEnabled)
+					.onChange(async (value) => {
+						this.plugin.settings.desktopOpenInNewTabEnabled = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		// ── 모바일 탭 목록 ───────────────────────────────────
+		new Setting(containerEl).setName('모바일 탭 목록').setHeading();
+		new Setting(containerEl)
+			.setName('활성화')
+			.setDesc('뷰 헤더에 탭 목록 버튼을 추가합니다. 탭 전환, 스와이프로 닫기, 롱프레스로 핀·닫기·탐색기에서 보기를 지원합니다.')
+			.addToggle(toggle =>
+				toggle
+					.setValue(this.plugin.settings.mobileTabListEnabled)
+					.onChange(async (value) => {
+						this.plugin.settings.mobileTabListEnabled = value;
+						await this.plugin.saveSettings();
+						if (value) this.plugin.setupMobileTabList();
+						else this.plugin.teardownMobileTabList();
 					})
 			);
 
