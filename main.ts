@@ -78,6 +78,7 @@ export default class OhUtilsPlugin extends Plugin {
 	private openingHomeNote = false;
 	private sortPatcher: (() => void) | null = null;
 	private closePatcher: (() => void) | null = null;
+	private openPatcher: (() => void) | null = null;
 	private reopeningTabPinnedFiles = false;
 	private pinObserver: MutationObserver | null = null;
 	private debouncedApplyExplorer = debounce(() => { this.applyPinIcons(); this.applyFolderActionButtons(); }, 50, true);
@@ -328,6 +329,7 @@ export default class OhUtilsPlugin extends Plugin {
 			this.rebuildTabPinFilter();
 			this.patchFileExplorerSort();
 			this.patchLeafClose();
+			this.patchLeafOpen();
 			this.applyPinIcons();
 			this.applyFolderActionButtons();
 			this.applyTabPinButtons();
@@ -350,6 +352,7 @@ export default class OhUtilsPlugin extends Plugin {
 	async onunload() {
 		this.sortPatcher?.();
 		this.closePatcher?.();
+		this.openPatcher?.();
 		this.pinObserver?.disconnect();
 		this.clearPinDecorations();
 		this.clearFolderActionButtons();
@@ -459,6 +462,27 @@ export default class OhUtilsPlugin extends Plugin {
 		})).finally(() => {
 			this.reopeningTabPinnedFiles = false;
 			this.applyTabPinButtons();
+		});
+	}
+
+	private patchLeafOpen() {
+		const plugin = this;
+		this.openPatcher = around(WorkspaceLeaf.prototype, {
+			openFile(old) {
+				return function(this: WorkspaceLeaf, file: TFile, state?: unknown) {
+					if (plugin.settings.tabPinEnabled && plugin.isTabPinned(file.path)) {
+						const existingLeaf = plugin.app.workspace.getLeavesOfType('markdown')
+							.find(leaf => leaf !== this && (leaf.view as any)?.file?.path === file.path) ?? null;
+						if (existingLeaf) {
+							plugin.log('[tab-pin] duplicate open blocked, activating existing tab:', file.path);
+							plugin.app.workspace.setActiveLeaf(existingLeaf, { focus: true });
+							setTimeout(() => this.detach(), 0);
+							return Promise.resolve();
+						}
+					}
+					return old.call(this, file, state);
+				};
+			}
 		});
 	}
 
