@@ -89,6 +89,7 @@ export default class OhUtilsPlugin extends Plugin {
 	private mobileTabListHeaderButtonEl: HTMLElement | null = null;
 	private mobileTabListIsOpen = false;
 	private mobileTabListAttachedToContainerEl: HTMLElement | null = null;
+	private isHandlingBackNavigation = false;
 	private mobileTabListLeafOrder: string[] = [];
 	private pinObserver: MutationObserver | null = null;
 	private debouncedApplyExplorer = debounce(() => { this.applyPinIcons(); this.applyFolderActionButtons(); }, 50, true);
@@ -400,7 +401,7 @@ export default class OhUtilsPlugin extends Plugin {
 	setupAndroidBackNavigation(): void {
 		if (!Platform.isAndroidApp) return;
 		this.registerEvent(this.app.workspace.on('file-open', (file) => {
-			if (!this.settings.mobileBackNavigationEnabled || !file) return;
+			if (this.isHandlingBackNavigation || !this.settings.mobileBackNavigationEnabled || !file) return;
 			this.log('[android-back] file-open → push history state:', file.path);
 			window.history.pushState(null, '');
 		}));
@@ -412,8 +413,11 @@ export default class OhUtilsPlugin extends Plugin {
 			}
 			if (!this.settings.mobileBackNavigationEnabled) return;
 			this.log('[android-back] popstate → navigate back');
+			this.isHandlingBackNavigation = true;
 			this.navigateBackInWorkspace();
-			window.history.pushState(null, '');
+			// file-open 이벤트가 비동기로 발생하므로 한 틱 뒤 플래그를 해제한다
+			setTimeout(() => { this.isHandlingBackNavigation = false; }, 0);
+			// 재push 없음 — state 소모가 곧 뒤로가기 한 단계, 모두 소모 시 앱 종료
 		});
 	}
 
