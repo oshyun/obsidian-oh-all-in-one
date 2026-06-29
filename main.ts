@@ -89,8 +89,9 @@ export default class OhUtilsPlugin extends Plugin {
 	private mobileTabListHeaderButtonEl: HTMLElement | null = null;
 	private mobileTabListIsOpen = false;
 	private mobileTabListAttachedToContainerEl: HTMLElement | null = null;
-	private isHandlingBackNavigation = false;
 	private mobileTabListLeafOrder: string[] = [];
+	private backFileHistory: string[] = [];
+	private isHandlingBackNavigation = false;
 	private pinObserver: MutationObserver | null = null;
 	private debouncedApplyExplorer = debounce(() => { this.applyPinIcons(); this.applyFolderActionButtons(); }, 50, true);
 	private pinFilter: Ignore | null = null;
@@ -400,34 +401,66 @@ export default class OhUtilsPlugin extends Plugin {
 
 	setupAndroidBackNavigation(): void {
 		if (!Platform.isAndroidApp) return;
+
+		// 사용자가 파일을 열 때마다 스택에 쌓는다 (뒤로가기로 연 파일은 제외)
 		this.registerEvent(this.app.workspace.on('file-open', (file) => {
-			if (this.isHandlingBackNavigation || !this.settings.mobileBackNavigationEnabled || !file) return;
-			this.log('[android-back] file-open → push history state:', file.path);
-			window.history.pushState(null, '');
-		}));
-		this.registerDomEvent(window, 'popstate', () => {
-			if (this.mobileTabListIsOpen) {
-				this.closeMobileTabList();
-				window.history.pushState(null, '');
-				return;
+			if (!file || this.isHandlingBackNavigation) return;
+			if (this.backFileHistory[this.backFileHistory.length - 1] !== file.path) {
+				this.backFileHistory.push(file.path);
 			}
-			if (!this.settings.mobileBackNavigationEnabled) return;
-			this.log('[android-back] popstate → navigate back');
-			this.isHandlingBackNavigation = true;
-			this.navigateBackInWorkspace();
-			// file-open 이벤트가 비동기로 발생하므로 한 틱 뒤 플래그를 해제한다
-			setTimeout(() => { this.isHandlingBackNavigation = false; }, 0);
-			// 재push 없음 — state 소모가 곧 뒤로가기 한 단계, 모두 소모 시 앱 종료
-		});
+		}));
+
+		// 동일 back 이벤트가 여러 경로로 중복 발화하는 것을 방지
+		let isProcessingBackEvent = false;
+		const onBackPressed = () => {
+			if (isProcessingBackEvent) return;
+			isProcessingBackEvent = true;
+			setTimeout(() => { isProcessingBackEvent = false; }, 200);
+			this.handleAndroidBack();
+		};
+
+		// Capacitor App 플러그인 브리지 (현대 Obsidian Android의 기본 경로)
+		try {
+			const capacitorApp = (window as any).Capacitor?.Plugins?.App;
+			capacitorApp?.addListener?.('backButton', onBackPressed);
+		} catch { /* Capacitor 미지원 환경 */ }
+
+		// Cordova 호환 폴백 (registerDomEvent는 커스텀 이벤트 타입 미지원)
+		const cordovaBackHandler = (e: Event) => { e.preventDefault(); onBackPressed(); };
+		document.addEventListener('backbutton', cordovaBackHandler);
+		this.register(() => document.removeEventListener('backbutton', cordovaBackHandler));
 	}
 
-	private navigateBackInWorkspace(): void {
-		const workspace = this.app.workspace as any;
-		if (typeof workspace.navigateBack === 'function') {
-			workspace.navigateBack();
-		} else {
-			(this.app as any).commands?.executeCommandById?.('app:go-back');
+	private handleAndroidBack(): void {
+		// 탭뷰가 열려 있으면 설정 무관하게 닫는다
+		if (this.mobileTabListIsOpen) {
+			this.closeMobileTabList();
+			return;
 		}
+
+		// 기능 비활성화 또는 히스토리 없음 → 앱 종료
+		if (!this.settings.mobileBackNavigationEnabled || this.backFileHistory.length <= 1) {
+			this.exitAndroidApp();
+			return;
+		}
+
+		// 이전 파일로 이동
+		this.backFileHistory.pop();
+		const previousPath = this.backFileHistory[this.backFileHistory.length - 1];
+		const previousFile = this.app.vault.getAbstractFileByPath(previousPath);
+		if (previousFile instanceof TFile) {
+			this.isHandlingBackNavigation = true;
+			this.app.workspace.getLeaf(false).openFile(previousFile);
+			setTimeout(() => { this.isHandlingBackNavigation = false; }, 100);
+		} else {
+			// 파일이 삭제됐으면 재귀적으로 한 단계 더 뒤로
+			this.handleAndroidBack();
+		}
+	}
+
+	private exitAndroidApp(): void {
+		try { (window as any).Capacitor?.Plugins?.App?.exitApp?.(); } catch { /* ignore */ }
+		try { (navigator as any).app?.exitApp?.(); } catch { /* ignore */ }
 	}
 
 	teardownMobileTabList(): void {
