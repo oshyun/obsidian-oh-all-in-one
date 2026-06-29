@@ -91,7 +91,7 @@ export default class OhUtilsPlugin extends Plugin {
 	private mobileTabListAttachedToContainerEl: HTMLElement | null = null;
 	private mobileTabListLeafOrder: string[] = [];
 	private backFileHistory: string[] = [];
-	private isHandlingBackNavigation = false;
+	private backNavigationTargetPath: string | null = null;
 	private pinObserver: MutationObserver | null = null;
 	private debouncedApplyExplorer = debounce(() => { this.applyPinIcons(); this.applyFolderActionButtons(); }, 50, true);
 	private pinFilter: Ignore | null = null;
@@ -404,7 +404,13 @@ export default class OhUtilsPlugin extends Plugin {
 
 		// 사용자가 파일을 열 때마다 스택에 쌓는다 (뒤로가기로 연 파일은 제외)
 		this.registerEvent(this.app.workspace.on('file-open', (file) => {
-			if (!file || this.isHandlingBackNavigation) return;
+			if (!file) return;
+			// 뒤로가기로 이동 중이면 스택에 쌓지 않는다.
+			// 첫 file-open 발화 시 해제한다 (타임아웃 대신 이벤트로 해제해 타이밍 문제를 없앤다).
+			if (this.backNavigationTargetPath !== null) {
+				this.backNavigationTargetPath = null;
+				return;
+			}
 			if (this.backFileHistory[this.backFileHistory.length - 1] !== file.path) {
 				this.backFileHistory.push(file.path);
 			}
@@ -449,9 +455,8 @@ export default class OhUtilsPlugin extends Plugin {
 		const previousPath = this.backFileHistory[this.backFileHistory.length - 1];
 		const previousFile = this.app.vault.getAbstractFileByPath(previousPath);
 		if (previousFile instanceof TFile) {
-			this.isHandlingBackNavigation = true;
+			this.backNavigationTargetPath = previousPath;
 			this.app.workspace.getLeaf(false).openFile(previousFile);
-			setTimeout(() => { this.isHandlingBackNavigation = false; }, 100);
 		} else {
 			// 파일이 삭제됐으면 재귀적으로 한 단계 더 뒤로
 			this.handleAndroidBack();
