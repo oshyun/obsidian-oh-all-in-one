@@ -406,11 +406,9 @@ export default class OhUtilsPlugin extends Plugin {
 		this.registerEvent(this.app.workspace.on('file-open', (file) => {
 			if (!file) return;
 			// 뒤로가기로 이동 중이면 스택에 쌓지 않는다.
-			// 목표 파일이 도착하면 플래그를 해제한다 (타임아웃 대신 이벤트로 해제해 타이밍 문제를 없앤다).
+			// 첫 file-open 발화 시 해제한다 (타임아웃 대신 이벤트로 해제해 타이밍 문제를 없앤다).
 			if (this.backNavigationTargetPath !== null) {
-				if (file.path === this.backNavigationTargetPath) {
-					this.backNavigationTargetPath = null;
-				}
+				this.backNavigationTargetPath = null;
 				return;
 			}
 			if (this.backFileHistory[this.backFileHistory.length - 1] !== file.path) {
