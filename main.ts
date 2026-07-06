@@ -49,6 +49,7 @@ interface OhUtilsSettings {
 	desktopOpenInNewTabEnabled: boolean;
 	mobileTabListEnabled: boolean;
 	mobileBackNavigationEnabled: boolean;
+	minimizeOnCloseEnabled: boolean;
 	debugMode: boolean;
 }
 
@@ -76,6 +77,7 @@ const DEFAULT_SETTINGS: OhUtilsSettings = {
 	desktopOpenInNewTabEnabled: false,
 	mobileTabListEnabled: true,
 	mobileBackNavigationEnabled: true,
+	minimizeOnCloseEnabled: true,
 	debugMode: false,
 };
 
@@ -88,6 +90,8 @@ export default class OhUtilsPlugin extends Plugin {
 	private mobileTabListBackdropEl: HTMLElement | null = null;
 	private mobileTabListHeaderButtonEl: HTMLElement | null = null;
 	private mobileTabListIsOpen = false;
+	private minimizeOnCloseHandler: ((event: any) => void) | null = null;
+	private minimizeOnCloseWindow: any = null;
 	private mobileTabListAttachedToContainerEl: HTMLElement | null = null;
 	private mobileTabListLeafOrder: string[] = [];
 	private backFileHistory: string[] = [];
@@ -313,6 +317,7 @@ export default class OhUtilsPlugin extends Plugin {
 			this.applyFolderActionButtons();
 			this.setupPinObserver();
 			this.registerGlobalHotkeys();
+			this.setupMinimizeOnClose();
 			this.setupMobileTabList();
 			this.setupAndroidBackNavigation();
 			this.registerEvent(
@@ -344,6 +349,7 @@ export default class OhUtilsPlugin extends Plugin {
 		this.clearFolderActionButtons();
 		this.teardownMobileTabList();
 		this.unregisterGlobalHotkeys();
+		this.teardownMinimizeOnClose();
 	}
 
 	private patchLeafOpenFile() {
@@ -1293,23 +1299,32 @@ export default class OhUtilsPlugin extends Plugin {
 
 		for (const hotkey of this.settings.globalHotkeys) {
 			if (!hotkey.accelerator || !hotkey.commandId) continue;
+			const runCommand = () => {
+				const win = remote.getCurrentWindow();
+				this.log('[global-hotkey] triggered:', hotkey.accelerator, '→', hotkey.commandId,
+					'| window visible:', win.isVisible());
+				if (!win.isVisible()) win.show();
+				win.focus();
+				const cmd = (this.app as any).commands.commands[hotkey.commandId];
+				if (!cmd) {
+					this.log('[global-hotkey] command not found:', hotkey.commandId);
+					return;
+				}
+				if (cmd.checkCallback) cmd.checkCallback(false);
+				else if (cmd.callback) cmd.callback();
+			};
 			try {
-				remote.globalShortcut.register(hotkey.accelerator, () => {
-					const win = remote.getCurrentWindow();
-					this.log('[global-hotkey] triggered:', hotkey.accelerator, '→', hotkey.commandId,
-						'| window visible:', win.isVisible());
-					if (!win.isVisible()) win.show();
-					win.focus();
-					const cmd = (this.app as any).commands.commands[hotkey.commandId];
-					if (!cmd) {
-						this.log('[global-hotkey] command not found:', hotkey.commandId);
-						return;
-					}
-					if (cmd.checkCallback) cmd.checkCallback(false);
-					else if (cmd.callback) cmd.callback();
-				});
+				let didRegister = remote.globalShortcut.register(hotkey.accelerator, runCommand);
+				if (!didRegister) {
+					// 이전 세션에서 남은 등록 상태(예: 다른 PC로 설정 동기화 직후, 비정상 종료 후 재시작)를
+					// 정리한 뒤 한 번 더 시도한다
+					remote.globalShortcut.unregister(hotkey.accelerator);
+					didRegister = remote.globalShortcut.register(hotkey.accelerator, runCommand);
+				}
+				if (!didRegister) throw new Error('register failed');
 				this.log('[global-hotkey] registered:', hotkey.accelerator, '→', hotkey.commandId);
 			} catch {
+				this.log('[global-hotkey] registration failed:', hotkey.accelerator);
 				new Notice(`[oh-utils] 단축키 등록 실패: ${hotkey.accelerator}`);
 			}
 		}
@@ -1325,6 +1340,30 @@ export default class OhUtilsPlugin extends Plugin {
 				try { remote.globalShortcut.unregister(hotkey.accelerator); } catch {}
 			}
 		}
+	}
+
+	// ── 창 닫기 시 최소화 ────────────────────────────────────
+
+	setupMinimizeOnClose() {
+		if (!Platform.isDesktop || !this.settings.minimizeOnCloseEnabled) return;
+		const remote = getElectronRemote();
+		if (!remote) return;
+
+		this.teardownMinimizeOnClose();
+		const currentWindow = remote.getCurrentWindow();
+		this.minimizeOnCloseHandler = (event: any) => {
+			event.preventDefault();
+			currentWindow.minimize();
+		};
+		this.minimizeOnCloseWindow = currentWindow;
+		currentWindow.on('close', this.minimizeOnCloseHandler);
+	}
+
+	teardownMinimizeOnClose() {
+		if (!this.minimizeOnCloseHandler || !this.minimizeOnCloseWindow) return;
+		this.minimizeOnCloseWindow.off('close', this.minimizeOnCloseHandler);
+		this.minimizeOnCloseHandler = null;
+		this.minimizeOnCloseWindow = null;
 	}
 
 	async loadSettings() {
@@ -1478,6 +1517,24 @@ class OhUtilsSettingTab extends PluginSettingTab {
 						this.display();
 					})
 			);
+
+		// ── 창 닫기 ──────────────────────────────────────────
+		if (Platform.isDesktop) {
+			new Setting(containerEl).setName('창 닫기').setHeading();
+			new Setting(containerEl)
+				.setName('닫기 버튼 클릭 시 최소화')
+				.setDesc('창의 닫기 버튼을 누르면 앱을 종료하는 대신 최소화합니다. Dock(Mac) 또는 작업표시줄(Windows) 아이콘을 클릭하면 다시 열립니다.')
+				.addToggle(toggle =>
+					toggle
+						.setValue(this.plugin.settings.minimizeOnCloseEnabled)
+						.onChange(async (value) => {
+							this.plugin.settings.minimizeOnCloseEnabled = value;
+							await this.plugin.saveSettings();
+							if (value) this.plugin.setupMinimizeOnClose();
+							else this.plugin.teardownMinimizeOnClose();
+						})
+				);
+		}
 
 		// ── 디버그 ───────────────────────────────────────────
 		new Setting(containerEl).setName('디버그').setHeading();
