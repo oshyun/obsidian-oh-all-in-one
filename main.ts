@@ -1302,8 +1302,9 @@ export default class OhUtilsPlugin extends Plugin {
 			const runCommand = () => {
 				const win = remote.getCurrentWindow();
 				this.log('[global-hotkey] triggered:', hotkey.accelerator, '→', hotkey.commandId,
-					'| window visible:', win.isVisible());
-				if (!win.isVisible()) win.show();
+					'| window visible:', win.isVisible(), '| minimized:', win.isMinimized());
+				if (win.isMinimized()) win.restore();
+				win.show();
 				win.focus();
 				const cmd = (this.app as any).commands.commands[hotkey.commandId];
 				if (!cmd) {
