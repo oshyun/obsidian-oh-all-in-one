@@ -2,6 +2,7 @@ import {
 	AbstractInputSuggest,
 	App,
 	debounce,
+	KeymapEventHandler,
 	Modal,
 	Notice,
 	Platform,
@@ -48,7 +49,7 @@ interface OhUtilsSettings {
 	mobileOpenInNewTabEnabled: boolean;
 	desktopOpenInNewTabEnabled: boolean;
 	mobileTabListEnabled: boolean;
-	mobileBackNavigationEnabled: boolean;
+	minimizeOnEscapeEnabled: boolean;
 	debugMode: boolean;
 }
 
@@ -75,7 +76,7 @@ const DEFAULT_SETTINGS: OhUtilsSettings = {
 	mobileOpenInNewTabEnabled: true,
 	desktopOpenInNewTabEnabled: false,
 	mobileTabListEnabled: true,
-	mobileBackNavigationEnabled: true,
+	minimizeOnEscapeEnabled: true,
 	debugMode: false,
 };
 
@@ -90,14 +91,13 @@ export default class OhUtilsPlugin extends Plugin {
 	private mobileTabListIsOpen = false;
 	private mobileTabListAttachedToContainerEl: HTMLElement | null = null;
 	private mobileTabListLeafOrder: string[] = [];
-	private backFileHistory: string[] = [];
-	private backNavigationTargetPath: string | null = null;
 	private pinObserver: MutationObserver | null = null;
 	private debouncedApplyExplorer = debounce(() => { this.applyPinIcons(); this.applyFolderActionButtons(); }, 50, true);
 	private pinFilter: Ignore | null = null;
 	private hideFilter: Ignore | null = null;
 	private newlyCreatedFilePaths = new Set<string>();
 	private previousActiveFilePath: string | null = null;
+	private minimizeOnEscapeHandler: KeymapEventHandler | null = null;
 
 	log(...args: unknown[]) {
 		if (this.settings.debugMode) console.log('[oh-utils]', ...args);
@@ -313,8 +313,8 @@ export default class OhUtilsPlugin extends Plugin {
 			this.applyFolderActionButtons();
 			this.setupPinObserver();
 			this.registerGlobalHotkeys();
+			this.setupMinimizeOnEscape();
 			this.setupMobileTabList();
-			this.setupAndroidBackNavigation();
 			this.registerEvent(
 				this.app.workspace.on('layout-change', () => {
 					this.refreshMobileTabList();
@@ -344,6 +344,7 @@ export default class OhUtilsPlugin extends Plugin {
 		this.clearFolderActionButtons();
 		this.teardownMobileTabList();
 		this.unregisterGlobalHotkeys();
+		this.teardownMinimizeOnEscape();
 	}
 
 	private patchLeafOpenFile() {
@@ -395,77 +396,6 @@ export default class OhUtilsPlugin extends Plugin {
 	setupMobileTabList(): void {
 		if (!this.settings.mobileTabListEnabled) return;
 		this.refreshMobileTabList();
-	}
-
-	// ── 안드로이드 뒤로가기 ─────────────────────────────────────
-
-	setupAndroidBackNavigation(): void {
-		if (!Platform.isAndroidApp) return;
-
-		// 사용자가 파일을 열 때마다 스택에 쌓는다 (뒤로가기로 연 파일은 제외)
-		this.registerEvent(this.app.workspace.on('file-open', (file) => {
-			if (!file) return;
-			// 뒤로가기로 이동 중이면 스택에 쌓지 않는다.
-			// 첫 file-open 발화 시 해제한다 (타임아웃 대신 이벤트로 해제해 타이밍 문제를 없앤다).
-			if (this.backNavigationTargetPath !== null) {
-				this.backNavigationTargetPath = null;
-				return;
-			}
-			if (this.backFileHistory[this.backFileHistory.length - 1] !== file.path) {
-				this.backFileHistory.push(file.path);
-			}
-		}));
-
-		// 동일 back 이벤트가 여러 경로로 중복 발화하는 것을 방지
-		let isProcessingBackEvent = false;
-		const onBackPressed = () => {
-			if (isProcessingBackEvent) return;
-			isProcessingBackEvent = true;
-			setTimeout(() => { isProcessingBackEvent = false; }, 200);
-			this.handleAndroidBack();
-		};
-
-		// Capacitor App 플러그인 브리지 (현대 Obsidian Android의 기본 경로)
-		try {
-			const capacitorApp = (window as any).Capacitor?.Plugins?.App;
-			capacitorApp?.addListener?.('backButton', onBackPressed);
-		} catch { /* Capacitor 미지원 환경 */ }
-
-		// Cordova 호환 폴백 (registerDomEvent는 커스텀 이벤트 타입 미지원)
-		const cordovaBackHandler = (e: Event) => { e.preventDefault(); onBackPressed(); };
-		document.addEventListener('backbutton', cordovaBackHandler);
-		this.register(() => document.removeEventListener('backbutton', cordovaBackHandler));
-	}
-
-	private handleAndroidBack(): void {
-		// 탭뷰가 열려 있으면 설정 무관하게 닫는다
-		if (this.mobileTabListIsOpen) {
-			this.closeMobileTabList();
-			return;
-		}
-
-		// 기능 비활성화 또는 히스토리 없음 → 앱 종료
-		if (!this.settings.mobileBackNavigationEnabled || this.backFileHistory.length <= 1) {
-			this.exitAndroidApp();
-			return;
-		}
-
-		// 이전 파일로 이동
-		this.backFileHistory.pop();
-		const previousPath = this.backFileHistory[this.backFileHistory.length - 1];
-		const previousFile = this.app.vault.getAbstractFileByPath(previousPath);
-		if (previousFile instanceof TFile) {
-			this.backNavigationTargetPath = previousPath;
-			this.app.workspace.getLeaf(false).openFile(previousFile);
-		} else {
-			// 파일이 삭제됐으면 재귀적으로 한 단계 더 뒤로
-			this.handleAndroidBack();
-		}
-	}
-
-	private exitAndroidApp(): void {
-		try { (window as any).Capacitor?.Plugins?.App?.exitApp?.(); } catch { /* ignore */ }
-		try { (navigator as any).app?.exitApp?.(); } catch { /* ignore */ }
 	}
 
 	teardownMobileTabList(): void {
@@ -1337,6 +1267,29 @@ export default class OhUtilsPlugin extends Plugin {
 		}
 	}
 
+	// ── 창 최소화 (Esc) ──────────────────────────────────────
+
+	setupMinimizeOnEscape() {
+		if (!Platform.isDesktop || !this.settings.minimizeOnEscapeEnabled) return;
+		const remote = getElectronRemote();
+		if (!remote) return;
+
+		// 루트 Scope(app.scope)는 모달·메뉴·제안 목록이 열려 있으면 그것들이 push한 Scope에
+		// 밀려 호출되지 않는다. 에디터 포커스는 Scope로 걸러지지 않으므로 별도로 체크한다.
+		this.minimizeOnEscapeHandler = this.app.scope.register(null, 'Escape', () => {
+			if (this.app.workspace.activeEditor?.editor?.hasFocus()) return false;
+			this.log('[minimize-on-escape] triggered');
+			remote.getCurrentWindow().minimize();
+			return false;
+		});
+	}
+
+	teardownMinimizeOnEscape() {
+		if (!this.minimizeOnEscapeHandler) return;
+		this.app.scope.unregister(this.minimizeOnEscapeHandler);
+		this.minimizeOnEscapeHandler = null;
+	}
+
 	async loadSettings() {
 		const data = await this.loadData();
 		// COMPAT(pinnedPaths-to-pinnedPatterns): string[] -> string 변환 (schema migration, v0.x)
@@ -1489,6 +1442,29 @@ class OhUtilsSettingTab extends PluginSettingTab {
 					})
 			);
 
+		// ── 창 최소화 ────────────────────────────────────────
+		new Setting(containerEl).setName('창 최소화').setHeading();
+		if (Platform.isDesktop) {
+			new Setting(containerEl)
+				.setName('아무것도 활성화되지 않았을 때 Esc로 최소화')
+				.setDesc('모달·메뉴·제안 목록이 열려 있지 않고 에디터에 포커스가 없는 상태에서 Esc 키를 누르면 창을 최소화합니다.')
+				.addToggle(toggle =>
+					toggle
+						.setValue(this.plugin.settings.minimizeOnEscapeEnabled)
+						.onChange(async (value) => {
+							this.plugin.settings.minimizeOnEscapeEnabled = value;
+							await this.plugin.saveSettings();
+							this.plugin.teardownMinimizeOnEscape();
+							if (value) this.plugin.setupMinimizeOnEscape();
+						})
+				);
+		} else {
+			containerEl.createEl('p', {
+				text: '창 최소화는 데스크탑에서만 사용 가능합니다.',
+				cls: 'oh-aio-notice-text',
+			});
+		}
+
 		// ── 디버그 ───────────────────────────────────────────
 		new Setting(containerEl).setName('디버그').setHeading();
 		new Setting(containerEl)
@@ -1597,27 +1573,6 @@ class OhUtilsSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 						if (value) this.plugin.setupMobileTabList();
 						else this.plugin.teardownMobileTabList();
-					})
-			);
-
-		// ── 안드로이드 뒤로가기 ─────────────────────────────
-		new Setting(containerEl).setName('안드로이드 뒤로가기').setHeading();
-		if (!Platform.isAndroidApp) {
-			containerEl.createEl('p', {
-				text: '안드로이드 앱에서만 사용 가능합니다.',
-				cls: 'oh-aio-notice-text',
-			});
-			return;
-		}
-		new Setting(containerEl)
-			.setName('활성화')
-			.setDesc('뒤로가기 버튼을 누르면 앱을 종료하는 대신 이전 파일로 이동합니다. 더 이상 이동할 파일이 없으면 앱이 종료됩니다.')
-			.addToggle(toggle =>
-				toggle
-					.setValue(this.plugin.settings.mobileBackNavigationEnabled)
-					.onChange(async (value) => {
-						this.plugin.settings.mobileBackNavigationEnabled = value;
-						await this.plugin.saveSettings();
 					})
 			);
 	}
