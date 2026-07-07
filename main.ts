@@ -90,8 +90,9 @@ export default class OhUtilsPlugin extends Plugin {
 	private mobileTabListBackdropEl: HTMLElement | null = null;
 	private mobileTabListHeaderButtonEl: HTMLElement | null = null;
 	private mobileTabListIsOpen = false;
-	private minimizeOnCloseHandler: ((event: any) => void) | null = null;
-	private minimizeOnCloseWindow: any = null;
+	private minimizeOnCloseHandler: ((event: BeforeUnloadEvent) => void) | null = null;
+	private reloadCommandPatcher: (() => void) | null = null;
+	private isIntentionalReload = false;
 	private mobileTabListAttachedToContainerEl: HTMLElement | null = null;
 	private mobileTabListLeafOrder: string[] = [];
 	private backFileHistory: string[] = [];
@@ -1351,20 +1352,39 @@ export default class OhUtilsPlugin extends Plugin {
 		if (!remote) return;
 
 		this.teardownMinimizeOnClose();
-		const currentWindow = remote.getCurrentWindow();
-		this.minimizeOnCloseHandler = (event: any) => {
-			event.preventDefault();
-			currentWindow.minimize();
+		// QUIRK(electron-remote): remote.getCurrentWindow()의 'close' 이벤트는 렌더러<->메인 프로세스 간
+		// 비동기 IPC로 전달되어 event.preventDefault()가 실제 종료를 막기 전에 창이 닫혀버린다.
+		// 렌더러 자체 이벤트인 beforeunload는 동기적으로 처리되므로 이를 사용해 종료를 막는다.
+		// QUIRK-REMOVE-WHEN: @electron/remote가 close 이벤트의 동기적 preventDefault를 지원하게 되면
+		//
+		// "저장하지 않고 새로고침"(app:reload) 명령도 beforeunload를 발생시키므로, 이 명령이
+		// 실행되는 순간을 감지해 그 경우에만 beforeunload 차단을 건너뛴다.
+		const plugin = this;
+		this.reloadCommandPatcher = around((this.app as any).commands, {
+			executeCommandById(old) {
+				return function (id: string, ...args: unknown[]) {
+					if (id === 'app:reload') plugin.isIntentionalReload = true;
+					return old.call(this, id, ...args);
+				};
+			},
+		});
+		this.minimizeOnCloseHandler = (event: BeforeUnloadEvent) => {
+			if (this.isIntentionalReload) {
+				this.isIntentionalReload = false;
+				return;
+			}
+			event.returnValue = false;
+			remote.getCurrentWindow().minimize();
 		};
-		this.minimizeOnCloseWindow = currentWindow;
-		currentWindow.on('close', this.minimizeOnCloseHandler);
+		window.addEventListener('beforeunload', this.minimizeOnCloseHandler);
 	}
 
 	teardownMinimizeOnClose() {
-		if (!this.minimizeOnCloseHandler || !this.minimizeOnCloseWindow) return;
-		this.minimizeOnCloseWindow.off('close', this.minimizeOnCloseHandler);
+		this.reloadCommandPatcher?.();
+		this.reloadCommandPatcher = null;
+		if (!this.minimizeOnCloseHandler) return;
+		window.removeEventListener('beforeunload', this.minimizeOnCloseHandler);
 		this.minimizeOnCloseHandler = null;
-		this.minimizeOnCloseWindow = null;
 	}
 
 	async loadSettings() {
