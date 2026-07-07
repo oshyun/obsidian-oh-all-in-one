@@ -91,6 +91,8 @@ export default class OhUtilsPlugin extends Plugin {
 	private mobileTabListHeaderButtonEl: HTMLElement | null = null;
 	private mobileTabListIsOpen = false;
 	private minimizeOnCloseHandler: ((event: BeforeUnloadEvent) => void) | null = null;
+	private reloadCommandPatcher: (() => void) | null = null;
+	private isIntentionalReload = false;
 	private mobileTabListAttachedToContainerEl: HTMLElement | null = null;
 	private mobileTabListLeafOrder: string[] = [];
 	private backFileHistory: string[] = [];
@@ -1354,7 +1356,23 @@ export default class OhUtilsPlugin extends Plugin {
 		// 비동기 IPC로 전달되어 event.preventDefault()가 실제 종료를 막기 전에 창이 닫혀버린다.
 		// 렌더러 자체 이벤트인 beforeunload는 동기적으로 처리되므로 이를 사용해 종료를 막는다.
 		// QUIRK-REMOVE-WHEN: @electron/remote가 close 이벤트의 동기적 preventDefault를 지원하게 되면
+		//
+		// "저장하지 않고 새로고침"(app:reload) 명령도 beforeunload를 발생시키므로, 이 명령이
+		// 실행되는 순간을 감지해 그 경우에만 beforeunload 차단을 건너뛴다.
+		const plugin = this;
+		this.reloadCommandPatcher = around((this.app as any).commands, {
+			executeCommandById(old) {
+				return function (id: string, ...args: unknown[]) {
+					if (id === 'app:reload') plugin.isIntentionalReload = true;
+					return old.call(this, id, ...args);
+				};
+			},
+		});
 		this.minimizeOnCloseHandler = (event: BeforeUnloadEvent) => {
+			if (this.isIntentionalReload) {
+				this.isIntentionalReload = false;
+				return;
+			}
 			event.returnValue = false;
 			remote.getCurrentWindow().minimize();
 		};
@@ -1362,6 +1380,8 @@ export default class OhUtilsPlugin extends Plugin {
 	}
 
 	teardownMinimizeOnClose() {
+		this.reloadCommandPatcher?.();
+		this.reloadCommandPatcher = null;
 		if (!this.minimizeOnCloseHandler) return;
 		window.removeEventListener('beforeunload', this.minimizeOnCloseHandler);
 		this.minimizeOnCloseHandler = null;
@@ -1524,7 +1544,7 @@ class OhUtilsSettingTab extends PluginSettingTab {
 			new Setting(containerEl).setName('창 닫기').setHeading();
 			new Setting(containerEl)
 				.setName('닫기 버튼 클릭 시 최소화')
-				.setDesc('창의 닫기 버튼을 누르면 앱을 종료하는 대신 최소화합니다. Dock(Mac) 또는 작업표시줄(Windows) 아이콘을 클릭하면 다시 열립니다. 활성화 중에는 "저장하지 않고 새로고침" 명령도 창을 최소화합니다.')
+				.setDesc('창의 닫기 버튼을 누르면 앱을 종료하는 대신 최소화합니다. Dock(Mac) 또는 작업표시줄(Windows) 아이콘을 클릭하면 다시 열립니다.')
 				.addToggle(toggle =>
 					toggle
 						.setValue(this.plugin.settings.minimizeOnCloseEnabled)
