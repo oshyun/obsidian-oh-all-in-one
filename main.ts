@@ -90,8 +90,7 @@ export default class OhUtilsPlugin extends Plugin {
 	private mobileTabListBackdropEl: HTMLElement | null = null;
 	private mobileTabListHeaderButtonEl: HTMLElement | null = null;
 	private mobileTabListIsOpen = false;
-	private minimizeOnCloseHandler: ((event: any) => void) | null = null;
-	private minimizeOnCloseWindow: any = null;
+	private minimizeOnCloseHandler: ((event: BeforeUnloadEvent) => void) | null = null;
 	private mobileTabListAttachedToContainerEl: HTMLElement | null = null;
 	private mobileTabListLeafOrder: string[] = [];
 	private backFileHistory: string[] = [];
@@ -1351,20 +1350,21 @@ export default class OhUtilsPlugin extends Plugin {
 		if (!remote) return;
 
 		this.teardownMinimizeOnClose();
-		const currentWindow = remote.getCurrentWindow();
-		this.minimizeOnCloseHandler = (event: any) => {
-			event.preventDefault();
-			currentWindow.minimize();
+		// QUIRK(electron-remote): remote.getCurrentWindow()의 'close' 이벤트는 렌더러<->메인 프로세스 간
+		// 비동기 IPC로 전달되어 event.preventDefault()가 실제 종료를 막기 전에 창이 닫혀버린다.
+		// 렌더러 자체 이벤트인 beforeunload는 동기적으로 처리되므로 이를 사용해 종료를 막는다.
+		// QUIRK-REMOVE-WHEN: @electron/remote가 close 이벤트의 동기적 preventDefault를 지원하게 되면
+		this.minimizeOnCloseHandler = (event: BeforeUnloadEvent) => {
+			event.returnValue = false;
+			remote.getCurrentWindow().minimize();
 		};
-		this.minimizeOnCloseWindow = currentWindow;
-		currentWindow.on('close', this.minimizeOnCloseHandler);
+		window.addEventListener('beforeunload', this.minimizeOnCloseHandler);
 	}
 
 	teardownMinimizeOnClose() {
-		if (!this.minimizeOnCloseHandler || !this.minimizeOnCloseWindow) return;
-		this.minimizeOnCloseWindow.off('close', this.minimizeOnCloseHandler);
+		if (!this.minimizeOnCloseHandler) return;
+		window.removeEventListener('beforeunload', this.minimizeOnCloseHandler);
 		this.minimizeOnCloseHandler = null;
-		this.minimizeOnCloseWindow = null;
 	}
 
 	async loadSettings() {
@@ -1524,7 +1524,7 @@ class OhUtilsSettingTab extends PluginSettingTab {
 			new Setting(containerEl).setName('창 닫기').setHeading();
 			new Setting(containerEl)
 				.setName('닫기 버튼 클릭 시 최소화')
-				.setDesc('창의 닫기 버튼을 누르면 앱을 종료하는 대신 최소화합니다. Dock(Mac) 또는 작업표시줄(Windows) 아이콘을 클릭하면 다시 열립니다.')
+				.setDesc('창의 닫기 버튼을 누르면 앱을 종료하는 대신 최소화합니다. Dock(Mac) 또는 작업표시줄(Windows) 아이콘을 클릭하면 다시 열립니다. 활성화 중에는 "저장하지 않고 새로고침" 명령도 창을 최소화합니다.')
 				.addToggle(toggle =>
 					toggle
 						.setValue(this.plugin.settings.minimizeOnCloseEnabled)
