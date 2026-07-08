@@ -2,6 +2,7 @@ import {
 	AbstractInputSuggest,
 	App,
 	debounce,
+	KeymapEventHandler,
 	Modal,
 	Notice,
 	Platform,
@@ -48,6 +49,7 @@ interface OhUtilsSettings {
 	mobileOpenInNewTabEnabled: boolean;
 	desktopOpenInNewTabEnabled: boolean;
 	mobileTabListEnabled: boolean;
+	minimizeOnEscapeEnabled: boolean;
 	debugMode: boolean;
 }
 
@@ -74,6 +76,7 @@ const DEFAULT_SETTINGS: OhUtilsSettings = {
 	mobileOpenInNewTabEnabled: true,
 	desktopOpenInNewTabEnabled: false,
 	mobileTabListEnabled: true,
+	minimizeOnEscapeEnabled: true,
 	debugMode: false,
 };
 
@@ -94,6 +97,7 @@ export default class OhUtilsPlugin extends Plugin {
 	private hideFilter: Ignore | null = null;
 	private newlyCreatedFilePaths = new Set<string>();
 	private previousActiveFilePath: string | null = null;
+	private minimizeOnEscapeHandler: KeymapEventHandler | null = null;
 
 	log(...args: unknown[]) {
 		if (this.settings.debugMode) console.log('[oh-utils]', ...args);
@@ -309,6 +313,7 @@ export default class OhUtilsPlugin extends Plugin {
 			this.applyFolderActionButtons();
 			this.setupPinObserver();
 			this.registerGlobalHotkeys();
+			this.setupMinimizeOnEscape();
 			this.setupMobileTabList();
 			this.registerEvent(
 				this.app.workspace.on('layout-change', () => {
@@ -339,6 +344,7 @@ export default class OhUtilsPlugin extends Plugin {
 		this.clearFolderActionButtons();
 		this.teardownMobileTabList();
 		this.unregisterGlobalHotkeys();
+		this.teardownMinimizeOnEscape();
 	}
 
 	private patchLeafOpenFile() {
@@ -1261,6 +1267,29 @@ export default class OhUtilsPlugin extends Plugin {
 		}
 	}
 
+	// ── 창 최소화 (Esc) ──────────────────────────────────────
+
+	setupMinimizeOnEscape() {
+		if (!Platform.isDesktop || !this.settings.minimizeOnEscapeEnabled) return;
+		const remote = getElectronRemote();
+		if (!remote) return;
+
+		// 루트 Scope(app.scope)는 모달·메뉴·제안 목록이 열려 있으면 그것들이 push한 Scope에
+		// 밀려 호출되지 않는다. 에디터 포커스는 Scope로 걸러지지 않으므로 별도로 체크한다.
+		this.minimizeOnEscapeHandler = this.app.scope.register(null, 'Escape', () => {
+			if (this.app.workspace.activeEditor?.editor?.hasFocus()) return false;
+			this.log('[minimize-on-escape] triggered');
+			remote.getCurrentWindow().minimize();
+			return false;
+		});
+	}
+
+	teardownMinimizeOnEscape() {
+		if (!this.minimizeOnEscapeHandler) return;
+		this.app.scope.unregister(this.minimizeOnEscapeHandler);
+		this.minimizeOnEscapeHandler = null;
+	}
+
 	async loadSettings() {
 		const data = await this.loadData();
 		// COMPAT(pinnedPaths-to-pinnedPatterns): string[] -> string 변환 (schema migration, v0.x)
@@ -1412,6 +1441,29 @@ class OhUtilsSettingTab extends PluginSettingTab {
 						this.display();
 					})
 			);
+
+		// ── 창 최소화 ────────────────────────────────────────
+		new Setting(containerEl).setName('창 최소화').setHeading();
+		if (Platform.isDesktop) {
+			new Setting(containerEl)
+				.setName('아무것도 활성화되지 않았을 때 Esc로 최소화')
+				.setDesc('모달·메뉴·제안 목록이 열려 있지 않고 에디터에 포커스가 없는 상태에서 Esc 키를 누르면 창을 최소화합니다.')
+				.addToggle(toggle =>
+					toggle
+						.setValue(this.plugin.settings.minimizeOnEscapeEnabled)
+						.onChange(async (value) => {
+							this.plugin.settings.minimizeOnEscapeEnabled = value;
+							await this.plugin.saveSettings();
+							this.plugin.teardownMinimizeOnEscape();
+							if (value) this.plugin.setupMinimizeOnEscape();
+						})
+				);
+		} else {
+			containerEl.createEl('p', {
+				text: '창 최소화는 데스크탑에서만 사용 가능합니다.',
+				cls: 'oh-aio-notice-text',
+			});
+		}
 
 		// ── 디버그 ───────────────────────────────────────────
 		new Setting(containerEl).setName('디버그').setHeading();
