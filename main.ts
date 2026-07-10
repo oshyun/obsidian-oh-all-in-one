@@ -318,12 +318,20 @@ export default class OhUtilsPlugin extends Plugin {
 			if (!this.settings.minimizeOnEscapeEnabled) return;
 			if (event.key !== 'Escape') return;
 
+			// 오버레이가 열려 있으면 Obsidian 기본 동작(닫기)에 맡기고 아무것도 하지 않는다
+			const blockingOverlay = document.querySelector('.modal-container, .menu, .suggestion-container');
+			if (blockingOverlay) {
+				this.log('[minimize-on-escape] pass-through: overlay open',
+					blockingOverlay.matches('.modal-container') ? 'modal' :
+					blockingOverlay.matches('.menu') ? 'menu' :
+					blockingOverlay.matches('.suggestion-container') ? 'suggestion' : 'other');
+				return;
+			}
+
+			// 오버레이가 없을 때: 편집 중이면 편집모드만 해제
 			const activeLeaf = this.app.workspace.activeLeaf;
 			const markdownView = activeLeaf?.view instanceof MarkdownView ? activeLeaf.view as MarkdownView : null;
-			const editorHasFocus = markdownView?.editor?.hasFocus();
-
-			if (editorHasFocus) {
-				// 편집 중이면 편집모드 해제: Source mode면 Reading view로, 그 외는 blur
+			if (markdownView?.editor?.hasFocus()) {
 				const viewState = activeLeaf!.getViewState();
 				if (viewState.state?.mode === 'source') {
 					this.log('[minimize-on-escape] switch source->preview');
@@ -335,16 +343,6 @@ export default class OhUtilsPlugin extends Plugin {
 					this.log('[minimize-on-escape] blur editor');
 					(document.activeElement as HTMLElement)?.blur();
 				}
-				return;
-			}
-
-			const blockingOverlay = document.querySelector('.modal-container, .menu, .suggestion-container');
-			if (blockingOverlay) {
-				const classes = '.' + Array.from(blockingOverlay.classList).join('.');
-				const matches = blockingOverlay.matches('.modal-container') ? 'modal-container' :
-					blockingOverlay.matches('.menu') ? 'menu' :
-					blockingOverlay.matches('.suggestion-container') ? 'suggestion-container' : 'unknown';
-				this.log('[minimize-on-escape] blocked:', matches, '| class:', classes);
 				return;
 			}
 
