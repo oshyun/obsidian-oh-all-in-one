@@ -2,7 +2,6 @@ import {
 	AbstractInputSuggest,
 	App,
 	debounce,
-	KeymapEventHandler,
 	Modal,
 	Notice,
 	Platform,
@@ -97,7 +96,6 @@ export default class OhUtilsPlugin extends Plugin {
 	private hideFilter: Ignore | null = null;
 	private newlyCreatedFilePaths = new Set<string>();
 	private previousActiveFilePath: string | null = null;
-	private minimizeOnEscapeHandler: KeymapEventHandler | null = null;
 
 	log(...args: unknown[]) {
 		if (this.settings.debugMode) console.log('[oh-utils]', ...args);
@@ -313,8 +311,16 @@ export default class OhUtilsPlugin extends Plugin {
 			this.applyFolderActionButtons();
 			this.setupPinObserver();
 			this.registerGlobalHotkeys();
-			this.setupMinimizeOnEscape();
 			this.setupMobileTabList();
+
+			this.registerDomEvent(document, 'keydown', (event: KeyboardEvent) => {
+				if (!this.settings.minimizeOnEscapeEnabled) return;
+				if (event.key !== 'Escape') return;
+				if (this.app.workspace.activeEditor?.editor?.hasFocus()) return;
+				if (document.querySelector('.modal-container, .menu, .suggestion-container')) return;
+				this.log('[minimize-on-escape] triggered');
+				getElectronRemote()?.getCurrentWindow().minimize();
+			});
 			this.registerEvent(
 				this.app.workspace.on('layout-change', () => {
 					this.refreshMobileTabList();
@@ -344,7 +350,6 @@ export default class OhUtilsPlugin extends Plugin {
 		this.clearFolderActionButtons();
 		this.teardownMobileTabList();
 		this.unregisterGlobalHotkeys();
-		this.teardownMinimizeOnEscape();
 	}
 
 	private patchLeafOpenFile() {
@@ -1267,28 +1272,6 @@ export default class OhUtilsPlugin extends Plugin {
 		}
 	}
 
-	// ── 창 최소화 (Esc) ──────────────────────────────────────
-
-	setupMinimizeOnEscape() {
-		if (!Platform.isDesktop || !this.settings.minimizeOnEscapeEnabled) return;
-		const remote = getElectronRemote();
-		if (!remote) return;
-
-		// 루트 Scope(app.scope)는 모달·메뉴·제안 목록이 열려 있으면 그것들이 push한 Scope에
-		// 밀려 호출되지 않는다. 에디터 포커스는 Scope로 걸러지지 않으므로 별도로 체크한다.
-		this.minimizeOnEscapeHandler = this.app.scope.register(null, 'Escape', () => {
-			if (this.app.workspace.activeEditor?.editor?.hasFocus()) return false;
-			this.log('[minimize-on-escape] triggered');
-			remote.getCurrentWindow().minimize();
-			return false;
-		});
-	}
-
-	teardownMinimizeOnEscape() {
-		if (!this.minimizeOnEscapeHandler) return;
-		this.app.scope.unregister(this.minimizeOnEscapeHandler);
-		this.minimizeOnEscapeHandler = null;
-	}
 
 	async loadSettings() {
 		const data = await this.loadData();
@@ -1454,8 +1437,6 @@ class OhUtilsSettingTab extends PluginSettingTab {
 						.onChange(async (value) => {
 							this.plugin.settings.minimizeOnEscapeEnabled = value;
 							await this.plugin.saveSettings();
-							this.plugin.teardownMinimizeOnEscape();
-							if (value) this.plugin.setupMinimizeOnEscape();
 						})
 				);
 		} else {
