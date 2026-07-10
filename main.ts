@@ -319,7 +319,8 @@ export default class OhUtilsPlugin extends Plugin {
 
 			const activeEditor = this.app.workspace.activeEditor;
 			if (activeEditor?.editor?.hasFocus()) {
-				this.log('[minimize-on-escape] blocked: editor has focus | type:', activeEditor.constructor.name, '| file:', (activeEditor as any)?.file?.path);
+				this.log('[minimize-on-escape] blur editor | type:', activeEditor.constructor.name, '| file:', (activeEditor as any)?.file?.path);
+				(document.activeElement as HTMLElement)?.blur();
 				return;
 			}
 
