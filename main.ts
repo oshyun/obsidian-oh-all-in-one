@@ -2,6 +2,7 @@ import {
 	AbstractInputSuggest,
 	App,
 	debounce,
+	MarkdownView,
 	Modal,
 	Notice,
 	Platform,
@@ -317,10 +318,23 @@ export default class OhUtilsPlugin extends Plugin {
 			if (!this.settings.minimizeOnEscapeEnabled) return;
 			if (event.key !== 'Escape') return;
 
-			const activeEditor = this.app.workspace.activeEditor;
-			if (activeEditor?.editor?.hasFocus()) {
-				this.log('[minimize-on-escape] blur editor | type:', activeEditor.constructor.name, '| file:', (activeEditor as any)?.file?.path);
-				(document.activeElement as HTMLElement)?.blur();
+			const activeLeaf = this.app.workspace.activeLeaf;
+			const markdownView = activeLeaf?.view instanceof MarkdownView ? activeLeaf.view as MarkdownView : null;
+			const editorHasFocus = markdownView?.editor?.hasFocus();
+
+			if (editorHasFocus) {
+				// 편집 중이면 편집모드 해제: Source mode면 Reading view로, 그 외는 blur
+				const viewState = activeLeaf!.getViewState();
+				if (viewState.state?.mode === 'source') {
+					this.log('[minimize-on-escape] switch source->preview');
+					activeLeaf!.setViewState({
+						...viewState,
+						state: { ...viewState.state, mode: 'preview' },
+					});
+				} else {
+					this.log('[minimize-on-escape] blur editor');
+					(document.activeElement as HTMLElement)?.blur();
+				}
 				return;
 			}
 
@@ -336,7 +350,7 @@ export default class OhUtilsPlugin extends Plugin {
 
 			this.log('[minimize-on-escape] triggered');
 			getElectronRemote()?.getCurrentWindow().minimize();
-		});
+		}, { capture: true });
 			this.registerEvent(
 				this.app.workspace.on('layout-change', () => {
 					this.refreshMobileTabList();
