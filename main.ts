@@ -314,13 +314,28 @@ export default class OhUtilsPlugin extends Plugin {
 			this.setupMobileTabList();
 
 			this.registerDomEvent(document, 'keydown', (event: KeyboardEvent) => {
-				if (!this.settings.minimizeOnEscapeEnabled) return;
-				if (event.key !== 'Escape') return;
-				if (this.app.workspace.activeEditor?.editor?.hasFocus()) return;
-				if (document.querySelector('.modal-container, .menu, .suggestion-container')) return;
-				this.log('[minimize-on-escape] triggered');
-				getElectronRemote()?.getCurrentWindow().minimize();
-			});
+			if (!this.settings.minimizeOnEscapeEnabled) return;
+			if (event.key !== 'Escape') return;
+
+			const activeEditor = this.app.workspace.activeEditor;
+			if (activeEditor?.editor?.hasFocus()) {
+				this.log('[minimize-on-escape] blocked: editor has focus | type:', activeEditor.constructor.name, '| file:', (activeEditor as any)?.file?.path);
+				return;
+			}
+
+			const blockingOverlay = document.querySelector('.modal-container, .menu, .suggestion-container');
+			if (blockingOverlay) {
+				const classes = '.' + Array.from(blockingOverlay.classList).join('.');
+				const matches = blockingOverlay.matches('.modal-container') ? 'modal-container' :
+					blockingOverlay.matches('.menu') ? 'menu' :
+					blockingOverlay.matches('.suggestion-container') ? 'suggestion-container' : 'unknown';
+				this.log('[minimize-on-escape] blocked:', matches, '| class:', classes);
+				return;
+			}
+
+			this.log('[minimize-on-escape] triggered');
+			getElectronRemote()?.getCurrentWindow().minimize();
+		});
 			this.registerEvent(
 				this.app.workspace.on('layout-change', () => {
 					this.refreshMobileTabList();
