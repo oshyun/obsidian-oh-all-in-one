@@ -99,9 +99,24 @@ export default class OhUtilsPlugin extends Plugin {
 	private previousActiveFilePath: string | null = null;
 	private escapePressCount = 0;
 	private escapePressTimer: number | null = null;
+	private escapeIndicatorEl: HTMLElement | null = null;
 
 	log(...args: unknown[]) {
 		if (this.settings.debugMode) console.log('[oh-utils]', ...args);
+	}
+
+	private showEscapeIndicator(count: number) {
+		if (!this.escapeIndicatorEl) {
+			this.escapeIndicatorEl = document.body.createDiv({ cls: 'oh-aio-escape-indicator' });
+		}
+		const filled = '●'.repeat(count);
+		const empty = '○'.repeat(3 - count);
+		this.escapeIndicatorEl.setText(`Esc ${filled}${empty}`);
+		this.escapeIndicatorEl.addClass('is-visible');
+	}
+
+	private hideEscapeIndicator() {
+		this.escapeIndicatorEl?.removeClass('is-visible');
 	}
 
 	async onload() {
@@ -354,8 +369,10 @@ export default class OhUtilsPlugin extends Plugin {
 			this.escapePressTimer = window.setTimeout(() => {
 				this.escapePressCount = 0;
 				this.escapePressTimer = null;
+				this.hideEscapeIndicator();
 			}, 400);
 
+			this.showEscapeIndicator(this.escapePressCount);
 			this.log('[minimize-on-escape] count', this.escapePressCount, '/ 3');
 			if (this.escapePressCount >= 3) {
 				this.escapePressCount = 0;
@@ -363,6 +380,7 @@ export default class OhUtilsPlugin extends Plugin {
 					window.clearTimeout(this.escapePressTimer);
 					this.escapePressTimer = null;
 				}
+				this.hideEscapeIndicator();
 				this.log('[minimize-on-escape] triggered (3x)');
 				getElectronRemote()?.getCurrentWindow().minimize();
 			}
