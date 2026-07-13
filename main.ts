@@ -97,6 +97,8 @@ export default class OhUtilsPlugin extends Plugin {
 	private hideFilter: Ignore | null = null;
 	private newlyCreatedFilePaths = new Set<string>();
 	private previousActiveFilePath: string | null = null;
+	private escapePressCount = 0;
+	private escapePressTimer: number | null = null;
 
 	log(...args: unknown[]) {
 		if (this.settings.debugMode) console.log('[oh-utils]', ...args);
@@ -346,8 +348,24 @@ export default class OhUtilsPlugin extends Plugin {
 				return;
 			}
 
-			this.log('[minimize-on-escape] triggered');
-			getElectronRemote()?.getCurrentWindow().minimize();
+			// 오버레이도 없고 에디터 포커스도 없으면 3연속 Esc에서만 최소화
+			this.escapePressCount++;
+			if (this.escapePressTimer !== null) window.clearTimeout(this.escapePressTimer);
+			this.escapePressTimer = window.setTimeout(() => {
+				this.escapePressCount = 0;
+				this.escapePressTimer = null;
+			}, 400);
+
+			this.log('[minimize-on-escape] count', this.escapePressCount, '/ 3');
+			if (this.escapePressCount >= 3) {
+				this.escapePressCount = 0;
+				if (this.escapePressTimer !== null) {
+					window.clearTimeout(this.escapePressTimer);
+					this.escapePressTimer = null;
+				}
+				this.log('[minimize-on-escape] triggered (3x)');
+				getElectronRemote()?.getCurrentWindow().minimize();
+			}
 		}, { capture: true });
 			this.registerEvent(
 				this.app.workspace.on('layout-change', () => {
