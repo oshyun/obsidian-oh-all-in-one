@@ -48,7 +48,7 @@ interface OhUtilsSettings {
 	noDuplicateTabsEnabled: boolean;
 	mobileOpenInNewTabEnabled: boolean;
 	desktopOpenInNewTabEnabled: boolean;
-	mobileTabListEnabled: boolean;
+	tabListEnabled: boolean;
 	minimizeOnEscapeEnabled: boolean;
 	debugMode: boolean;
 }
@@ -75,7 +75,7 @@ const DEFAULT_SETTINGS: OhUtilsSettings = {
 	noDuplicateTabsEnabled: true,
 	mobileOpenInNewTabEnabled: true,
 	desktopOpenInNewTabEnabled: false,
-	mobileTabListEnabled: true,
+	tabListEnabled: true,
 	minimizeOnEscapeEnabled: true,
 	debugMode: false,
 };
@@ -85,12 +85,12 @@ export default class OhUtilsPlugin extends Plugin {
 	private openingHomeNote = false;
 	private sortPatcher: (() => void) | null = null;
 	private leafOpenFilePatcher: (() => void) | null = null;
-	private mobileTabListPanelEl: HTMLElement | null = null;
-	private mobileTabListBackdropEl: HTMLElement | null = null;
-	private mobileTabListHeaderButtonEl: HTMLElement | null = null;
-	private mobileTabListIsOpen = false;
-	private mobileTabListAttachedToContainerEl: HTMLElement | null = null;
-	private mobileTabListLeafOrder: string[] = [];
+	private tabListPanelEl: HTMLElement | null = null;
+	private tabListBackdropEl: HTMLElement | null = null;
+	private tabListHeaderButtonEl: HTMLElement | null = null;
+	private tabListIsOpen = false;
+	private tabListAttachedToContainerEl: HTMLElement | null = null;
+	private tabListLeafOrder: string[] = [];
 	private pinObserver: MutationObserver | null = null;
 	private debouncedApplyExplorer = debounce(() => { this.applyPinIcons(); this.applyFolderActionButtons(); }, 50, true);
 	private pinFilter: Ignore | null = null;
@@ -117,6 +117,15 @@ export default class OhUtilsPlugin extends Plugin {
 
 	private hideEscapeIndicator() {
 		this.escapeIndicatorEl?.removeClass('is-visible');
+	}
+
+	private resetEscapePresses() {
+		this.escapePressCount = 0;
+		if (this.escapePressTimer !== null) {
+			window.clearTimeout(this.escapePressTimer);
+			this.escapePressTimer = null;
+		}
+		this.hideEscapeIndicator();
 	}
 
 	async onload() {
@@ -207,17 +216,8 @@ export default class OhUtilsPlugin extends Plugin {
 						.setTitle(isExplorerPinned ? '파일 탐색기 핀 해제' : '파일 탐색기 핀 고정')
 						.setIcon(isExplorerPinned ? 'pin-off' : 'pin')
 						.onClick(async () => {
-							if (isExplorerPinned) {
-								this.log('[pin] unpin explorer:', abstractFile.path);
-								this.settings.pinnedPatterns = this.removePatternLine(this.settings.pinnedPatterns, abstractFile.path);
-								this.removePinIcon(abstractFile.path);
-							} else {
-								this.log('[pin] pin explorer:', abstractFile.path);
-								this.settings.pinnedPatterns = this.addPatternLine(this.settings.pinnedPatterns, abstractFile.path);
-							}
-							await this.saveSettings();
-							this.rebuildPinFilter();
-							this.requestSort();
+							this.log('[pin]', isExplorerPinned ? 'unpin explorer:' : 'pin explorer:', abstractFile.path);
+							await this.setPinned(abstractFile.path, !isExplorerPinned);
 						});
 				});
 
@@ -227,6 +227,7 @@ export default class OhUtilsPlugin extends Plugin {
 		// 파일 삭제/이름 변경 시 pinnedPatterns 동기화
 		this.registerEvent(
 			this.app.vault.on('delete', (file: TAbstractFile) => {
+				this.newlyCreatedFilePaths.delete(file.path);
 				if (this.hasExactPinPattern(file.path)) {
 					this.log('[pin] vault delete → remove from pinnedPatterns:', file.path);
 					this.settings.pinnedPatterns = this.removePatternLine(this.settings.pinnedPatterns, file.path);
@@ -252,6 +253,10 @@ export default class OhUtilsPlugin extends Plugin {
 			this.app.vault.on('create', (file) => {
 				if (!(file instanceof TFile) || file.extension !== 'md') return;
 				if (this.openingHomeNote) return;
+				// 생성 시점에 이미 내용이 있는 파일(동기화·복사 등)은 빈 노트 후보가 아니므로
+				// 추적하지 않는다. 추적하면 한 번도 열리지 않은 채 Set에 영구 잔존한다.
+				// stat.size는 메타데이터 캐시에서 읽으므로 디스크 I/O가 없다.
+				if (file.stat.size !== 0) return;
 				this.newlyCreatedFilePaths.add(file.path);
 				this.log('[new-note-cleanup] tracking:', file.path);
 			})
@@ -329,76 +334,71 @@ export default class OhUtilsPlugin extends Plugin {
 			this.applyFolderActionButtons();
 			this.setupPinObserver();
 			this.registerGlobalHotkeys();
-			this.setupMobileTabList();
+			this.refreshTabList();
 
 			this.registerDomEvent(document, 'keydown', (event: KeyboardEvent) => {
-			if (!this.settings.minimizeOnEscapeEnabled) return;
-			if (event.key !== 'Escape') return;
+				if (!this.settings.minimizeOnEscapeEnabled) return;
+				if (event.key !== 'Escape') return;
 
-			// 오버레이가 열려 있으면 Obsidian 기본 동작(닫기)에 맡기고 아무것도 하지 않는다
-			const blockingOverlay = document.querySelector('.modal-container, .menu, .suggestion-container');
-			if (blockingOverlay) {
-				this.log('[minimize-on-escape] pass-through: overlay open',
-					blockingOverlay.matches('.modal-container') ? 'modal' :
-					blockingOverlay.matches('.menu') ? 'menu' :
-					blockingOverlay.matches('.suggestion-container') ? 'suggestion' : 'other');
-				return;
-			}
-
-			// 오버레이가 없을 때: 편집 중이면 편집모드만 해제
-			const activeLeaf = this.app.workspace.activeLeaf;
-			const markdownView = activeLeaf?.view instanceof MarkdownView ? activeLeaf.view as MarkdownView : null;
-			if (markdownView?.editor?.hasFocus()) {
-				const viewState = activeLeaf!.getViewState();
-				if (viewState.state?.mode === 'source') {
-					this.log('[minimize-on-escape] switch source->preview');
-					activeLeaf!.setViewState({
-						...viewState,
-						state: { ...viewState.state, mode: 'preview' },
-					});
-				} else {
-					this.log('[minimize-on-escape] blur editor');
-					(document.activeElement as HTMLElement)?.blur();
+				// 오버레이가 열려 있으면 Obsidian 기본 동작(닫기)에 맡기고 아무것도 하지 않는다
+				const blockingOverlay = document.querySelector('.modal-container, .menu, .suggestion-container');
+				if (blockingOverlay) {
+					this.resetEscapePresses();
+					this.log('[minimize-on-escape] pass-through: overlay open',
+						blockingOverlay.matches('.modal-container') ? 'modal' :
+						blockingOverlay.matches('.menu') ? 'menu' :
+						blockingOverlay.matches('.suggestion-container') ? 'suggestion' : 'other');
+					return;
 				}
-				return;
-			}
 
-			// 오버레이도 없고 에디터 포커스도 없으면 3연속 Esc에서만 최소화
-			this.escapePressCount++;
-			if (this.escapePressTimer !== null) window.clearTimeout(this.escapePressTimer);
-			this.escapePressTimer = window.setTimeout(() => {
-				this.escapePressCount = 0;
-				this.escapePressTimer = null;
-				this.hideEscapeIndicator();
-			}, 400);
-
-			this.showEscapeIndicator(this.escapePressCount);
-			this.log('[minimize-on-escape] count', this.escapePressCount, '/ 3');
-			if (this.escapePressCount >= 3) {
-				this.escapePressCount = 0;
-				if (this.escapePressTimer !== null) {
-					window.clearTimeout(this.escapePressTimer);
-					this.escapePressTimer = null;
+				// 오버레이가 없을 때: 편집 중이면 편집모드만 해제
+				const activeLeaf = this.app.workspace.activeLeaf;
+				const markdownView = activeLeaf?.view instanceof MarkdownView ? activeLeaf.view as MarkdownView : null;
+				if (markdownView?.editor?.hasFocus()) {
+					this.resetEscapePresses();
+					const viewState = activeLeaf!.getViewState();
+					if (viewState.state?.mode === 'source') {
+						this.log('[minimize-on-escape] switch source->preview');
+						activeLeaf!.setViewState({
+							...viewState,
+							state: { ...viewState.state, mode: 'preview' },
+						});
+					} else {
+						this.log('[minimize-on-escape] blur editor');
+						(document.activeElement as HTMLElement)?.blur();
+					}
+					return;
 				}
-				this.hideEscapeIndicator();
-				this.log('[minimize-on-escape] triggered (3x)');
-				getElectronRemote()?.getCurrentWindow().minimize();
-			}
-		}, { capture: true });
+
+				// 오버레이도 없고 에디터 포커스도 없으면 3연속 Esc에서만 최소화
+				this.escapePressCount++;
+				if (this.escapePressTimer !== null) window.clearTimeout(this.escapePressTimer);
+				this.escapePressTimer = window.setTimeout(() => {
+					this.resetEscapePresses();
+				}, 400);
+
+				this.showEscapeIndicator(this.escapePressCount);
+				this.log('[minimize-on-escape] count', this.escapePressCount, '/ 3');
+				if (this.escapePressCount >= 3) {
+					this.resetEscapePresses();
+					this.log('[minimize-on-escape] triggered (3x)');
+					getElectronRemote()?.getCurrentWindow().minimize();
+				}
+			}, { capture: true });
 			this.registerEvent(
 				this.app.workspace.on('layout-change', () => {
-					this.refreshMobileTabList();
+					this.refreshTabList();
 				})
 			);
-			this.registerEvent(this.app.workspace.on('active-leaf-change', () => this.refreshMobileTabList()));
+			this.registerEvent(this.app.workspace.on('active-leaf-change', () => this.refreshTabList()));
 		});
 
 		this.addCommand({
-			id: 'toggle-mobile-tab-list',
-			name: '모바일 탭 목록 열기/닫기',
+			id: 'toggle-tab-list',
+			name: '탭 목록 열기/닫기',
 			checkCallback: (checking: boolean) => {
-				if (!Platform.isMobile || !this.settings.mobileTabListEnabled || !this.mobileTabListHeaderButtonEl) return false;
-				if (!checking) this.toggleMobileTabList();
+				if (!this.settings.tabListEnabled || !this.tabListHeaderButtonEl) return false;
+				if (!checking) this.toggleTabList();
 				return true;
 			},
 		});
@@ -407,12 +407,15 @@ export default class OhUtilsPlugin extends Plugin {
 	}
 
 	async onunload() {
+		this.resetEscapePresses();
+		this.escapeIndicatorEl?.remove();
+		this.escapeIndicatorEl = null;
 		this.sortPatcher?.();
 		this.leafOpenFilePatcher?.();
 		this.pinObserver?.disconnect();
 		this.clearPinDecorations();
 		this.clearFolderActionButtons();
-		this.teardownMobileTabList();
+		this.teardownTabList();
 		this.unregisterGlobalHotkeys();
 	}
 
@@ -460,101 +463,96 @@ export default class OhUtilsPlugin extends Plugin {
 		});
 	}
 
-	// ── 모바일 탭 목록 ───────────────────────────────────────
+	// ── 탭 목록 ───────────────────────────────────────────────
 
-	setupMobileTabList(): void {
-		if (!this.settings.mobileTabListEnabled) return;
-		this.refreshMobileTabList();
+	teardownTabList(): void {
+		this.tabListHeaderButtonEl?.remove();
+		this.tabListPanelEl?.remove();
+		this.tabListBackdropEl?.remove();
+		this.tabListHeaderButtonEl = null;
+		this.tabListPanelEl = null;
+		this.tabListBackdropEl = null;
+		this.tabListAttachedToContainerEl = null;
+		this.tabListIsOpen = false;
 	}
 
-	teardownMobileTabList(): void {
-		this.mobileTabListHeaderButtonEl?.remove();
-		this.mobileTabListPanelEl?.remove();
-		this.mobileTabListBackdropEl?.remove();
-		this.mobileTabListHeaderButtonEl = null;
-		this.mobileTabListPanelEl = null;
-		this.mobileTabListBackdropEl = null;
-		this.mobileTabListAttachedToContainerEl = null;
-		this.mobileTabListIsOpen = false;
-	}
-
-	refreshMobileTabList(): void {
-		if (!this.settings.mobileTabListEnabled) return;
+	refreshTabList(): void {
+		if (!this.settings.tabListEnabled) return;
 
 		const leaf = this.app.workspace.getMostRecentLeaf();
 		const containerEl = (leaf?.view as any)?.containerEl as HTMLElement | undefined;
 		if (!containerEl) return;
 
-		if (containerEl !== this.mobileTabListAttachedToContainerEl) {
-			this.mobileTabListHeaderButtonEl?.remove();
-			this.mobileTabListHeaderButtonEl = null;
-			this.mobileTabListIsOpen = false;
-			this.mobileTabListAttachedToContainerEl = containerEl;
+		if (containerEl !== this.tabListAttachedToContainerEl) {
+			this.tabListHeaderButtonEl?.remove();
+			this.tabListHeaderButtonEl = null;
+			this.tabListIsOpen = false;
+			this.tabListAttachedToContainerEl = containerEl;
 
 			const headerEl = containerEl.querySelector('.view-header') as HTMLElement | null;
-			if (headerEl) this.attachMobileTabListButton(headerEl);
+			if (headerEl) this.attachTabListButton(headerEl);
 		}
 
-		if (this.mobileTabListIsOpen) this.rebuildMobileTabListRows();
+		if (this.tabListIsOpen) this.rebuildTabListRows();
 	}
 
-	private attachMobileTabListButton(headerEl: HTMLElement): void {
-		const buttonEl = createEl('div', { cls: 'oh-aio-mobile-tab-list-btn clickable-icon' });
+	private attachTabListButton(headerEl: HTMLElement): void {
+		const buttonEl = createEl('div', { cls: 'oh-aio-tab-list-btn clickable-icon' });
 		setIcon(buttonEl, 'layers-2');
 		buttonEl.setAttribute('aria-label', '탭 목록');
 		buttonEl.addEventListener('click', (e) => {
 			e.stopPropagation();
-			this.toggleMobileTabList();
+			this.toggleTabList();
 		});
 		const actionsEl = headerEl.querySelector('.view-actions');
 		if (actionsEl) actionsEl.insertBefore(buttonEl, actionsEl.firstChild);
 		else headerEl.appendChild(buttonEl);
-		this.mobileTabListHeaderButtonEl = buttonEl;
+		this.tabListHeaderButtonEl = buttonEl;
 	}
 
-	private toggleMobileTabList(): void {
-		if (this.mobileTabListIsOpen) this.closeMobileTabList();
-		else this.openMobileTabList();
+	private toggleTabList(): void {
+		if (this.tabListIsOpen) this.closeTabList();
+		else this.openTabList();
 	}
 
-	private openMobileTabList(): void {
-		if (!this.mobileTabListHeaderButtonEl) return;
+	private openTabList(): void {
+		if (!this.tabListHeaderButtonEl) return;
 
-		if (!this.mobileTabListBackdropEl) {
-			const backdropEl = createEl('div', { cls: 'oh-aio-mobile-tab-backdrop' });
-			backdropEl.addEventListener('click', () => this.closeMobileTabList());
+		if (!this.tabListBackdropEl) {
+			const backdropEl = createEl('div', { cls: 'oh-aio-tab-backdrop' });
+			backdropEl.addEventListener('click', () => this.closeTabList());
 			document.body.appendChild(backdropEl);
-			this.mobileTabListBackdropEl = backdropEl;
+			this.tabListBackdropEl = backdropEl;
 		}
-		if (!this.mobileTabListPanelEl) {
-			const panelEl = createEl('div', { cls: 'oh-aio-mobile-tab-panel' });
+		if (!this.tabListPanelEl) {
+			const panelEl = createEl('div', { cls: 'oh-aio-tab-panel' });
 			document.body.appendChild(panelEl);
-			this.mobileTabListPanelEl = panelEl;
+			this.tabListPanelEl = panelEl;
 		}
 
-		const buttonBottom = this.mobileTabListHeaderButtonEl.getBoundingClientRect().bottom;
-		this.mobileTabListPanelEl.style.top = buttonBottom + 'px';
+		const buttonBottom = this.tabListHeaderButtonEl.getBoundingClientRect().bottom;
+		this.tabListPanelEl.style.top = buttonBottom + 'px';
 
-		this.rebuildMobileTabListRows();
-		this.mobileTabListIsOpen = true;
-		this.mobileTabListPanelEl.addClass('is-open');
-		this.mobileTabListBackdropEl.addClass('is-open');
-		this.mobileTabListHeaderButtonEl.addClass('is-active');
+		this.rebuildTabListRows();
+		this.tabListIsOpen = true;
+		this.tabListPanelEl.addClass('is-open');
+		this.tabListBackdropEl.addClass('is-open');
+		this.tabListHeaderButtonEl.addClass('is-active');
 	}
 
-	private closeMobileTabList(): void {
-		this.mobileTabListIsOpen = false;
-		this.mobileTabListPanelEl?.removeClass('is-open');
-		this.mobileTabListBackdropEl?.removeClass('is-open');
-		this.mobileTabListHeaderButtonEl?.removeClass('is-active');
+	private closeTabList(): void {
+		this.tabListIsOpen = false;
+		this.tabListPanelEl?.removeClass('is-open');
+		this.tabListBackdropEl?.removeClass('is-open');
+		this.tabListHeaderButtonEl?.removeClass('is-active');
 	}
 
-	private rebuildMobileTabListRows(): void {
-		if (!this.mobileTabListPanelEl) return;
-		if (this.mobileTabListHeaderButtonEl) {
-			this.mobileTabListPanelEl.style.top = this.mobileTabListHeaderButtonEl.getBoundingClientRect().bottom + 'px';
+	private rebuildTabListRows(): void {
+		if (!this.tabListPanelEl) return;
+		if (this.tabListHeaderButtonEl) {
+			this.tabListPanelEl.style.top = this.tabListHeaderButtonEl.getBoundingClientRect().bottom + 'px';
 		}
-		this.mobileTabListPanelEl.empty();
+		this.tabListPanelEl.empty();
 
 		const activeFile = this.app.workspace.getActiveFile();
 		const rootSplit = (this.app.workspace as any).rootSplit;
@@ -586,69 +584,61 @@ export default class OhUtilsPlugin extends Plugin {
 		}
 
 		if (openLeaves.length === 0 && pinnedClosedFiles.length === 0) {
-			this.mobileTabListPanelEl.createEl('div', {
-				cls: 'oh-aio-mobile-tab-empty',
+			this.tabListPanelEl.createEl('div', {
+				cls: 'oh-aio-tab-empty',
 				text: '열린 탭이 없습니다.',
 			});
 			return;
 		}
 
-		const sortedLeaves = this.applyMobileTabLeafOrder(openLeaves);
+		const sortedLeaves = this.applyTabLeafOrder(openLeaves);
 		for (const openLeaf of sortedLeaves) {
 			const file = (openLeaf.view as any).file as TFile;
 			const isActive = file.path === activeFile?.path;
 			const isFilePinned = pinnedPathSet.has(file.path);
-			this.buildMobileTabRow(this.mobileTabListPanelEl, openLeaf, file, isActive, isFilePinned);
+			this.buildTabRow(this.tabListPanelEl, openLeaf, file, isActive, isFilePinned);
 		}
 
 		for (const file of pinnedClosedFiles) {
-			this.buildMobileTabPinnedClosedRow(this.mobileTabListPanelEl, file);
+			this.buildTabPinnedClosedRow(this.tabListPanelEl, file);
 		}
 	}
 
-	private buildMobileTabRow(
+	private buildTabRow(
 		containerEl: HTMLElement,
 		leaf: WorkspaceLeaf,
 		file: TFile,
 		isActive: boolean,
 		isPinnedFile: boolean,
 	): void {
-		const rowEl = createEl('div', { cls: 'oh-aio-mobile-tab-row' });
+		const rowEl = createEl('div', { cls: 'oh-aio-tab-row' });
 		rowEl.dataset.filePath = file.path;
 		if (isActive) rowEl.addClass('is-active');
 
-		const deleteBackgroundEl = rowEl.createEl('div', { cls: 'oh-aio-mobile-tab-row-delete-bg' });
+		const deleteBackgroundEl = rowEl.createEl('div', { cls: 'oh-aio-tab-row-delete-bg' });
 		const deleteIconEl = deleteBackgroundEl.createEl('span');
 		setIcon(deleteIconEl, 'trash-2');
 
-		const innerEl = rowEl.createEl('div', { cls: 'oh-aio-mobile-tab-row-inner' });
+		const innerEl = rowEl.createEl('div', { cls: 'oh-aio-tab-row-inner' });
 
 		if (isPinnedFile) {
-			const pinIconEl = innerEl.createEl('span', { cls: 'oh-aio-mobile-tab-row-pin' });
+			const pinIconEl = innerEl.createEl('span', { cls: 'oh-aio-tab-row-pin' });
 			setIcon(pinIconEl, 'pin');
 		}
 
-		this.buildMobileTabFileText(innerEl, file);
+		this.buildTabFileText(innerEl, file);
 
 		// 핀 토글 버튼
-		const pinButtonEl = innerEl.createEl('div', { cls: 'oh-aio-mobile-tab-row-pin-btn clickable-icon' });
+		const pinButtonEl = innerEl.createEl('div', { cls: 'oh-aio-tab-row-pin-btn clickable-icon' });
 		setIcon(pinButtonEl, isPinnedFile ? 'pin-off' : 'pin');
 		pinButtonEl.setAttribute('aria-label', isPinnedFile ? '핀 해제' : '핀 고정');
 		pinButtonEl.addEventListener('click', (e) => {
 			e.stopPropagation();
-			if (isPinnedFile) {
-				this.unpinFile(file.path);
-			} else {
-				this.settings.pinnedPatterns = this.addPatternLine(this.settings.pinnedPatterns, file.path);
-				this.rebuildPinFilter();
-				this.requestSort();
-				this.saveSettings();
-				this.rebuildMobileTabListRows();
-			}
+			void this.setPinned(file.path, !isPinnedFile);
 		});
 
 		// 드래그 핸들
-		const dragHandleEl = innerEl.createEl('div', { cls: 'oh-aio-mobile-tab-row-drag-handle' });
+		const dragHandleEl = innerEl.createEl('div', { cls: 'oh-aio-tab-row-drag-handle' });
 		setIcon(dragHandleEl, 'grip-vertical');
 
 		containerEl.appendChild(rowEl);
@@ -656,48 +646,48 @@ export default class OhUtilsPlugin extends Plugin {
 		// 탭 전환
 		innerEl.addEventListener('click', () => {
 			this.app.workspace.setActiveLeaf(leaf, { focus: true });
-			this.closeMobileTabList();
+			this.closeTabList();
 		});
 
-		this.attachMobileTabSwipeToDelete(rowEl, innerEl, leaf, file.path);
-		this.setupMobileTabRowDrag(rowEl, dragHandleEl, file.path);
+		this.attachTabSwipeToDelete(rowEl, innerEl, leaf, file.path);
+		this.setupTabRowDrag(rowEl, dragHandleEl, file.path);
 	}
 
-	private buildMobileTabPinnedClosedRow(containerEl: HTMLElement, file: TFile): void {
-		const rowEl = createEl('div', { cls: 'oh-aio-mobile-tab-row is-pinned-closed' });
-		const innerEl = rowEl.createEl('div', { cls: 'oh-aio-mobile-tab-row-inner' });
+	private buildTabPinnedClosedRow(containerEl: HTMLElement, file: TFile): void {
+		const rowEl = createEl('div', { cls: 'oh-aio-tab-row is-pinned-closed' });
+		const innerEl = rowEl.createEl('div', { cls: 'oh-aio-tab-row-inner' });
 
-		const pinIconEl = innerEl.createEl('span', { cls: 'oh-aio-mobile-tab-row-pin' });
+		const pinIconEl = innerEl.createEl('span', { cls: 'oh-aio-tab-row-pin' });
 		setIcon(pinIconEl, 'pin');
 
-		this.buildMobileTabFileText(innerEl, file);
+		this.buildTabFileText(innerEl, file);
 
-		const unpinButtonEl = innerEl.createEl('div', { cls: 'oh-aio-mobile-tab-row-pin-btn clickable-icon' });
+		const unpinButtonEl = innerEl.createEl('div', { cls: 'oh-aio-tab-row-pin-btn clickable-icon' });
 		setIcon(unpinButtonEl, 'pin-off');
 		unpinButtonEl.setAttribute('aria-label', '핀 해제');
 		unpinButtonEl.addEventListener('click', (e) => {
 			e.stopPropagation();
-			this.unpinFile(file.path);
+			void this.setPinned(file.path, false);
 		});
 
-		const dragHandleEl = innerEl.createEl('div', { cls: 'oh-aio-mobile-tab-row-drag-handle' });
+		const dragHandleEl = innerEl.createEl('div', { cls: 'oh-aio-tab-row-drag-handle' });
 		setIcon(dragHandleEl, 'grip-vertical');
 
 		containerEl.appendChild(rowEl);
 
 		innerEl.addEventListener('click', () => {
 			this.app.workspace.getLeaf(false).openFile(file);
-			this.closeMobileTabList();
+			this.closeTabList();
 		});
 
-		this.setupMobileTabPinnedClosedRowDrag(rowEl, dragHandleEl, file.path);
+		this.setupTabPinnedClosedRowDrag(rowEl, dragHandleEl, file.path);
 	}
 
-	private setupMobileTabPinnedClosedRowDrag(rowEl: HTMLElement, dragHandleEl: HTMLElement, filePath: string): void {
-		this.setupMobileTabRowDragBase(
+	private setupTabPinnedClosedRowDrag(rowEl: HTMLElement, dragHandleEl: HTMLElement, filePath: string): void {
+		this.setupTabRowDragBase(
 			rowEl,
 			dragHandleEl,
-			'.oh-aio-mobile-tab-row.is-pinned-closed:not(.is-dragging)',
+			'.oh-aio-tab-row.is-pinned-closed:not(.is-dragging)',
 			(targetIndex) => {
 				const lines = this.settings.pinnedPatterns.split('\n').filter(l => l.trim());
 				const currentIndex = lines.indexOf(filePath);
@@ -706,22 +696,22 @@ export default class OhUtilsPlugin extends Plugin {
 					lines.splice(targetIndex, 0, filePath);
 					this.settings.pinnedPatterns = lines.join('\n');
 					this.saveSettings();
-					this.rebuildMobileTabListRows();
+					this.rebuildTabListRows();
 				}
 			},
 		);
 	}
 
-	private buildMobileTabFileText(innerEl: HTMLElement, file: TFile): void {
-		const textEl = innerEl.createEl('div', { cls: 'oh-aio-mobile-tab-row-text' });
+	private buildTabFileText(innerEl: HTMLElement, file: TFile): void {
+		const textEl = innerEl.createEl('div', { cls: 'oh-aio-tab-row-text' });
 		const displayName = file.extension === 'md' ? file.basename : file.name;
-		textEl.createEl('span', { cls: 'oh-aio-mobile-tab-row-name', text: displayName });
+		textEl.createEl('span', { cls: 'oh-aio-tab-row-name', text: displayName });
 		if (file.parent && file.parent.path !== '/') {
-			textEl.createEl('span', { cls: 'oh-aio-mobile-tab-row-path', text: file.parent.path });
+			textEl.createEl('span', { cls: 'oh-aio-tab-row-path', text: file.parent.path });
 		}
 	}
 
-	private attachMobileTabSwipeToDelete(
+	private attachTabSwipeToDelete(
 		rowEl: HTMLElement,
 		innerEl: HTMLElement,
 		leaf: WorkspaceLeaf,
@@ -768,38 +758,40 @@ export default class OhUtilsPlugin extends Plugin {
 		});
 	}
 
-	private applyMobileTabLeafOrder(leaves: WorkspaceLeaf[]): WorkspaceLeaf[] {
-		if (this.mobileTabListLeafOrder.length === 0) {
-			this.mobileTabListLeafOrder = leaves.map(l => (l.view as any)?.file?.path as string).filter(Boolean);
+	private applyTabLeafOrder(leaves: WorkspaceLeaf[]): WorkspaceLeaf[] {
+		if (this.tabListLeafOrder.length === 0) {
+			this.tabListLeafOrder = leaves.map(l => (l.view as any)?.file?.path as string).filter(Boolean);
 			return leaves;
 		}
-		const orderMap = new Map(this.mobileTabListLeafOrder.map((p, i) => [p, i]));
+		const orderMap = new Map(this.tabListLeafOrder.map((p, i) => [p, i]));
 		const sorted = [...leaves].sort((a, b) => {
 			const ap = (a.view as any)?.file?.path ?? '';
 			const bp = (b.view as any)?.file?.path ?? '';
 			return (orderMap.has(ap) ? orderMap.get(ap)! : Infinity) - (orderMap.has(bp) ? orderMap.get(bp)! : Infinity);
 		});
-		this.mobileTabListLeafOrder = sorted.map(l => (l.view as any)?.file?.path as string).filter(Boolean);
+		this.tabListLeafOrder = sorted.map(l => (l.view as any)?.file?.path as string).filter(Boolean);
 		return sorted;
 	}
 
-	private setupMobileTabRowDragBase(
+	private setupTabRowDragBase(
 		rowEl: HTMLElement,
 		dragHandleEl: HTMLElement,
 		draggableRowSelector: string,
 		onDrop: (targetIndex: number) => void,
 	): void {
-		const panelEl = this.mobileTabListPanelEl;
+		const panelEl = this.tabListPanelEl;
 		if (!panelEl) return;
 
-		dragHandleEl.addEventListener('touchstart', (e) => {
+		// Pointer Events로 마우스(데스크탑)·터치(모바일) 드래그를 한 경로로 처리한다.
+		// 핸들은 CSS touch-action: none이 걸려 있어 터치 드래그 중 패널이 스크롤되지 않는다.
+		dragHandleEl.addEventListener('pointerdown', (e) => {
 			e.stopPropagation();
 
-			const startY = e.touches[0].clientY;
+			const startY = e.clientY;
 			const rect = rowEl.getBoundingClientRect();
 
 			const cloneEl = rowEl.cloneNode(true) as HTMLElement;
-			cloneEl.classList.add('oh-aio-mobile-tab-row-drag-clone');
+			cloneEl.classList.add('oh-aio-tab-row-drag-clone');
 			cloneEl.style.top = rect.top + 'px';
 			cloneEl.style.left = rect.left + 'px';
 			cloneEl.style.width = rect.width + 'px';
@@ -807,10 +799,10 @@ export default class OhUtilsPlugin extends Plugin {
 
 			rowEl.classList.add('is-dragging');
 
-			const indicatorEl = createEl('div', { cls: 'oh-aio-mobile-tab-drop-indicator' });
+			const indicatorEl = createEl('div', { cls: 'oh-aio-tab-drop-indicator' });
 			panelEl.appendChild(indicatorEl);
 
-			// touchmove마다 DOM 쿼리·레이아웃 flush를 막기 위해 touchstart 시점에 스냅샷
+			// pointermove마다 DOM 쿼리·레이아웃 flush를 막기 위해 pointerdown 시점에 스냅샷
 			const draggableRows = Array.from(
 				panelEl.querySelectorAll(draggableRowSelector)
 			) as HTMLElement[];
@@ -826,15 +818,15 @@ export default class OhUtilsPlugin extends Plugin {
 
 			let targetIndex = -1;
 
-			const onMove = (ev: TouchEvent) => {
-				const touchY = ev.touches[0].clientY;
-				cloneEl.style.transform = `translateY(${touchY - startY}px)`;
+			const onMove = (ev: PointerEvent) => {
+				const pointerY = ev.clientY;
+				cloneEl.style.transform = `translateY(${pointerY - startY}px)`;
 
 				targetIndex = rowSnapshots.length;
 				let indicatorTop = -1;
 
 				for (let i = 0; i < rowSnapshots.length; i++) {
-					if (touchY < rowSnapshots[i].midY) {
+					if (pointerY < rowSnapshots[i].midY) {
 						targetIndex = i;
 						indicatorTop = rowSnapshots[i].topOffset;
 						break;
@@ -855,27 +847,27 @@ export default class OhUtilsPlugin extends Plugin {
 				indicatorEl.remove();
 				rowEl.classList.remove('is-dragging');
 
-				document.removeEventListener('touchmove', onMove);
-				document.removeEventListener('touchend', onEnd);
+				document.removeEventListener('pointermove', onMove);
+				document.removeEventListener('pointerup', onEnd);
 
 				if (targetIndex >= 0) onDrop(targetIndex);
 			};
 
-			document.addEventListener('touchmove', onMove, { passive: true });
-			document.addEventListener('touchend', onEnd);
-		}, { passive: true });
+			document.addEventListener('pointermove', onMove, { passive: true });
+			document.addEventListener('pointerup', onEnd);
+		});
 	}
 
-	private setupMobileTabRowDrag(rowEl: HTMLElement, dragHandleEl: HTMLElement, filePath: string): void {
-		this.setupMobileTabRowDragBase(
+	private setupTabRowDrag(rowEl: HTMLElement, dragHandleEl: HTMLElement, filePath: string): void {
+		this.setupTabRowDragBase(
 			rowEl,
 			dragHandleEl,
-			'.oh-aio-mobile-tab-row[data-file-path]:not(.is-dragging)',
+			'.oh-aio-tab-row[data-file-path]:not(.is-dragging)',
 			(targetIndex) => {
-				const newOrder = this.mobileTabListLeafOrder.filter(p => p !== filePath);
+				const newOrder = this.tabListLeafOrder.filter(p => p !== filePath);
 				newOrder.splice(targetIndex, 0, filePath);
-				this.mobileTabListLeafOrder = newOrder;
-				this.rebuildMobileTabListRows();
+				this.tabListLeafOrder = newOrder;
+				this.rebuildTabListRows();
 			},
 		);
 	}
@@ -967,12 +959,22 @@ export default class OhUtilsPlugin extends Plugin {
 		return patterns.split('\n').filter(l => l.trim() !== line).join('\n');
 	}
 
-	private unpinFile(filePath: string): void {
-		this.settings.pinnedPatterns = this.removePatternLine(this.settings.pinnedPatterns, filePath);
+	// UI에서의 핀 고정/해제 단일 출처: 컨텍스트 메뉴·액션 버튼·탭 목록 모두 이 메서드를 호출한다.
+	// (vault delete/rename 동기화, 탭 목록 드래그 순서 변경은 pinnedPatterns를 직접 다룬다)
+	private async setPinned(filePath: string, pinned: boolean): Promise<void> {
+		if (pinned) {
+			this.settings.pinnedPatterns = this.addPatternLine(this.settings.pinnedPatterns, filePath);
+		} else {
+			this.settings.pinnedPatterns = this.removePatternLine(this.settings.pinnedPatterns, filePath);
+			this.removePinIcon(filePath);
+		}
+		// 저장(디스크 쓰기)은 먼저 시작하고 메모리상 설정으로 즉시 갱신한다
+		const saving = this.saveSettings();
 		this.rebuildPinFilter();
 		this.requestSort();
-		this.saveSettings();
-		this.rebuildMobileTabListRows();
+		// 패널이 열려 있을 때만 재구성 — 닫힌 상태에서는 openTabList()가 열 때마다 재구성한다
+		if (this.tabListIsOpen) this.rebuildTabListRows();
+		await saving;
 	}
 
 	private renamePatternLine(patterns: string, oldLine: string, newLine: string): string {
@@ -1194,24 +1196,9 @@ export default class OhUtilsPlugin extends Plugin {
 				pinBtn.addEventListener('click', async (e) => {
 					e.stopPropagation();
 					e.preventDefault();
-					const wasPinned = this.hasExactPinPattern(item.file.path);
-					if (wasPinned) {
-						this.settings.pinnedPatterns = this.settings.pinnedPatterns
-							.split('\n')
-							.filter(line => line.trim() !== item.file.path)
-							.join('\n');
-						this.removePinIcon(item.file.path);
-					} else {
-						const current = this.settings.pinnedPatterns.trimEnd();
-						this.settings.pinnedPatterns = current
-							? current + '\n' + item.file.path
-							: item.file.path;
-					}
+					await this.setPinned(item.file.path, !this.hasExactPinPattern(item.file.path));
 					// 클릭 즉시 아이콘 업데이트 (DOM 재렌더 대기 안 함)
 					this.refreshPinButton(pinBtn, item.file.path);
-					await this.saveSettings();
-					this.rebuildPinFilter();
-					this.requestSort();
 				});
 			}
 
@@ -1345,6 +1332,13 @@ export default class OhUtilsPlugin extends Plugin {
 		if (data?.pinnedPaths && Array.isArray(data.pinnedPaths) && !data.pinnedPatterns) {
 			data.pinnedPatterns = (data.pinnedPaths as string[]).join('\n');
 			delete data.pinnedPaths;
+		}
+		// COMPAT(mobileTabListEnabled-rename): 모바일 탭 목록 -> 전 플랫폼 탭 목록 개명 (v0.0.70)
+		//   구 설정 키 mobileTabListEnabled의 저장값을 tabListEnabled로 이전한다
+		// COMPAT-REMOVE-WHEN: v0.0.70 이전 버전 사용률이 0%로 확인된 후 30일 경과 시
+		if (data?.mobileTabListEnabled !== undefined && data.tabListEnabled === undefined) {
+			data.tabListEnabled = data.mobileTabListEnabled;
+			delete data.mobileTabListEnabled;
 		}
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
 	}
@@ -1605,19 +1599,19 @@ class OhUtilsSettingTab extends PluginSettingTab {
 					})
 			);
 
-		// ── 모바일 탭 목록 ───────────────────────────────────
-		new Setting(containerEl).setName('모바일 탭 목록').setHeading();
+		// ── 탭 목록 ─────────────────────────────────────────
+		new Setting(containerEl).setName('탭 목록').setHeading();
 		new Setting(containerEl)
 			.setName('활성화')
-			.setDesc('뷰 헤더에 탭 목록 버튼을 추가합니다. 탭 전환, 스와이프로 닫기, 롱프레스로 닫기·탐색기에서 보기를 지원합니다.')
+			.setDesc('뷰 헤더에 탭 목록 버튼을 추가합니다. 탭 전환, 핀 고정, 드래그로 순서 변경을 지원하며 터치 기기에서는 스와이프로 탭을 닫을 수 있습니다.')
 			.addToggle(toggle =>
 				toggle
-					.setValue(this.plugin.settings.mobileTabListEnabled)
+					.setValue(this.plugin.settings.tabListEnabled)
 					.onChange(async (value) => {
-						this.plugin.settings.mobileTabListEnabled = value;
+						this.plugin.settings.tabListEnabled = value;
 						await this.plugin.saveSettings();
-						if (value) this.plugin.setupMobileTabList();
-						else this.plugin.teardownMobileTabList();
+						if (value) this.plugin.refreshTabList();
+						else this.plugin.teardownTabList();
 					})
 			);
 	}
