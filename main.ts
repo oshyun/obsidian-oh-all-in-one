@@ -1416,7 +1416,7 @@ class OhUtilsSettingTab extends PluginSettingTab {
 		return [
 			{ id: 'general',       label: '일반',       render: el => this.renderGeneral(el) },
 			{ id: 'note',          label: '노트',        render: el => this.renderNote(el) },
-			{ id: 'tab',           label: '탭',          render: el => this.renderTab(el) },
+			{ id: 'tab',           label: '탭',          render: el => this.renderTabSection(el) },
 			{ id: 'fileExplorer',  label: '파일 탐색기', render: el => this.renderFileExplorer(el) },
 			{ id: 'globalHotkeys', label: '글로벌 핫키', render: el => this.renderGlobalHotkeys(el) },
 		];
@@ -1583,7 +1583,11 @@ class OhUtilsSettingTab extends PluginSettingTab {
 			);
 	}
 
-	private renderTab(containerEl: HTMLElement): void {
+	// QUIRK(obsidian-settingtab-rendertab): Obsidian 코어가 설정 탭을 열 때 display() 대신
+	//   SettingTab의 renderTab() 라이프사이클 훅을 호출한다. 섹션 렌더러 이름이 renderTab이면
+	//   이 훅을 덮어써서 인자 없이 호출되던 부분이 크래시 나 설정창이 백지가 되므로 이름을 피한다.
+	// QUIRK-REMOVE-WHEN: 해당 없음 (코어 API 명세 일부로 굳어진 이름 — 유지)
+	private renderTabSection(containerEl: HTMLElement): void {
 		// ── 탭 동작 ──────────────────────────────────────────
 		new Setting(containerEl).setName('탭 동작').setHeading();
 		new Setting(containerEl)
