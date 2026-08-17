@@ -271,7 +271,7 @@
 }
 
 /* ── 모바일 탭 목록 ── */
-.oh-aio-mobile-tab-list-btn {
+.oh-aio-tab-list-btn {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
@@ -279,27 +279,27 @@
 	color: var(--text-normal);
 }
 
-.oh-aio-mobile-tab-list-btn.is-active {
+.oh-aio-tab-list-btn.is-active {
 	color: var(--interactive-accent);
 }
 
-.oh-aio-mobile-tab-list-btn svg {
+.oh-aio-tab-list-btn svg {
 	width: var(--icon-l, 20px);
 	height: var(--icon-l, 20px);
 }
 
-.oh-aio-mobile-tab-backdrop {
+.oh-aio-tab-backdrop {
 	position: fixed;
 	inset: 0;
 	z-index: 199;
 	display: none;
 }
 
-.oh-aio-mobile-tab-backdrop.is-open {
+.oh-aio-tab-backdrop.is-open {
 	display: block;
 }
 
-.oh-aio-mobile-tab-panel {
+.oh-aio-tab-panel {
 	position: fixed;
 	left: 0;
 	right: 0;
@@ -317,26 +317,26 @@
 	transition: opacity 0.18s ease, transform 0.18s ease;
 }
 
-.oh-aio-mobile-tab-panel.is-open {
+.oh-aio-tab-panel.is-open {
 	opacity: 1;
 	transform: translateY(0);
 	pointer-events: auto;
 }
 
-.oh-aio-mobile-tab-empty {
+.oh-aio-tab-empty {
 	padding: 24px 16px;
 	color: var(--text-muted);
 	font-size: 0.9em;
 	text-align: center;
 }
 
-.oh-aio-mobile-tab-row {
+.oh-aio-tab-row {
 	position: relative;
 	overflow: hidden;
 	border-bottom: 1px solid var(--background-modifier-border);
 }
 
-.oh-aio-mobile-tab-row-delete-bg {
+.oh-aio-tab-row-delete-bg {
 	position: absolute;
 	inset: 0;
 	display: flex;
@@ -347,12 +347,12 @@
 	color: var(--text-on-accent);
 }
 
-.oh-aio-mobile-tab-row-delete-bg svg {
+.oh-aio-tab-row-delete-bg svg {
 	width: 18px;
 	height: 18px;
 }
 
-.oh-aio-mobile-tab-row-inner {
+.oh-aio-tab-row-inner {
 	position: relative;
 	display: flex;
 	align-items: center;
@@ -363,26 +363,26 @@
 	transition: transform 0.2s ease;
 }
 
-.oh-aio-mobile-tab-row.is-active .oh-aio-mobile-tab-row-inner {
+.oh-aio-tab-row.is-active .oh-aio-tab-row-inner {
 	background: var(--background-secondary);
 }
 
-.oh-aio-mobile-tab-row.is-pinned-closed .oh-aio-mobile-tab-row-inner {
+.oh-aio-tab-row.is-pinned-closed .oh-aio-tab-row-inner {
 	opacity: 0.65;
 }
 
-.oh-aio-mobile-tab-row-pin {
+.oh-aio-tab-row-pin {
 	display: inline-flex;
 	flex-shrink: 0;
 	color: var(--interactive-accent);
 }
 
-.oh-aio-mobile-tab-row-pin svg {
+.oh-aio-tab-row-pin svg {
 	width: 14px;
 	height: 14px;
 }
 
-.oh-aio-mobile-tab-row-text {
+.oh-aio-tab-row-text {
 	display: flex;
 	flex-direction: column;
 	gap: 2px;
@@ -390,7 +390,7 @@
 	flex: 1;
 }
 
-.oh-aio-mobile-tab-row-name {
+.oh-aio-tab-row-name {
 	font-size: var(--font-ui-medium);
 	font-weight: 500;
 	color: var(--text-normal);
@@ -399,11 +399,11 @@
 	text-overflow: ellipsis;
 }
 
-.oh-aio-mobile-tab-row.is-active .oh-aio-mobile-tab-row-name {
+.oh-aio-tab-row.is-active .oh-aio-tab-row-name {
 	color: var(--interactive-accent);
 }
 
-.oh-aio-mobile-tab-row-path {
+.oh-aio-tab-row-path {
 	font-size: var(--font-ui-smaller);
 	color: var(--text-muted);
 	white-space: nowrap;
@@ -411,7 +411,7 @@
 	text-overflow: ellipsis;
 }
 
-.oh-aio-mobile-tab-row-pin-btn {
+.oh-aio-tab-row-pin-btn {
 	flex-shrink: 0;
 	width: 32px;
 	height: 32px;
@@ -422,12 +422,12 @@
 	border-radius: 4px;
 }
 
-.oh-aio-mobile-tab-row-pin-btn svg {
+.oh-aio-tab-row-pin-btn svg {
 	width: 16px;
 	height: 16px;
 }
 
-.oh-aio-mobile-tab-row-drag-handle {
+.oh-aio-tab-row-drag-handle {
 	flex-shrink: 0;
 	width: 32px;
 	height: 32px;
@@ -438,16 +438,16 @@
 	touch-action: none;
 }
 
-.oh-aio-mobile-tab-row-drag-handle svg {
+.oh-aio-tab-row-drag-handle svg {
 	width: 16px;
 	height: 16px;
 }
 
-.oh-aio-mobile-tab-row.is-dragging {
+.oh-aio-tab-row.is-dragging {
 	opacity: 0.3;
 }
 
-.oh-aio-mobile-tab-row-drag-clone {
+.oh-aio-tab-row-drag-clone {
 	position: fixed;
 	z-index: 300;
 	background: var(--background-primary);
@@ -456,7 +456,7 @@
 	pointer-events: none;
 }
 
-.oh-aio-mobile-tab-drop-indicator {
+.oh-aio-tab-drop-indicator {
 	position: absolute;
 	left: 0;
 	right: 0;

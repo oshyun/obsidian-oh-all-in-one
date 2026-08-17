@@ -31,6 +31,12 @@ _templates/
 
 Automatically opens a designated note when all tabs are closed.
 
+### Tab List
+
+Adds a tab list button to the view header for quickly switching between open tabs.
+Works on both desktop and mobile: switch tabs, toggle pin, and reorder by dragging.
+On touch devices, tabs can also be closed by swiping.
+
 ### Collapse Children
 
 Collapse all sub-folders inside a folder at once.
