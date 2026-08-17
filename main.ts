@@ -8,8 +8,8 @@ import {
 	Platform,
 	Plugin,
 	PluginSettingTab,
-	Setting,
 	setIcon,
+	SettingDefinitionItem,
 	TAbstractFile,
 	TFile,
 	TFolder,
@@ -20,7 +20,6 @@ import { around } from 'monkey-around';
 import ignore, { Ignore } from 'ignore';
 
 interface GlobalHotkey {
-	id: string;
 	accelerator: string;
 	commandId: string;
 	commandName: string;
@@ -43,7 +42,6 @@ interface OhUtilsSettings {
 	hidePatterns: string;
 	globalHotkeysEnabled: boolean;
 	globalHotkeys: GlobalHotkey[];
-	settingsSearchEnabled: boolean;
 	deleteEmptyNewNoteEnabled: boolean;
 	noDuplicateTabsEnabled: boolean;
 	mobileOpenInNewTabEnabled: boolean;
@@ -71,7 +69,6 @@ const DEFAULT_SETTINGS: OhUtilsSettings = {
 	hidePatterns: '',
 	globalHotkeysEnabled: false,
 	globalHotkeys: [],
-	settingsSearchEnabled: true,
 	deleteEmptyNewNoteEnabled: true,
 	noDuplicateTabsEnabled: true,
 	mobileOpenInNewTabEnabled: true,
@@ -642,6 +639,16 @@ export default class OhUtilsPlugin extends Plugin {
 		pinButtonEl.addEventListener('click', (e) => {
 			e.stopPropagation();
 			void this.setPinned(file.path, !isPinnedFile);
+		});
+
+		// 탭 닫기 버튼 — 마우스(데스크탑)에서도 닫을 수 있게. 터치는 스와이프도 가능.
+		// detach()가 layout-change를 발생시켜 목록이 자동 재구성되므로 별도 재구성 없음.
+		const closeButtonEl = innerEl.createEl('div', { cls: 'oh-aio-tab-row-close-btn clickable-icon' });
+		setIcon(closeButtonEl, 'x');
+		closeButtonEl.setAttribute('aria-label', '탭 닫기');
+		closeButtonEl.addEventListener('click', (e) => {
+			e.stopPropagation();
+			leaf.detach();
 		});
 
 		// 드래그 핸들
@@ -1330,6 +1337,14 @@ export default class OhUtilsPlugin extends Plugin {
 		}
 	}
 
+	// 핫키 목록 변경의 단일 출처: 등록 해제 → 목록 변경 → 저장 → 재등록 순서를 보장한다.
+	async changeGlobalHotkeys(applyChange: (hotkeys: GlobalHotkey[]) => void): Promise<void> {
+		this.unregisterGlobalHotkeys();
+		applyChange(this.settings.globalHotkeys);
+		await this.saveSettings();
+		this.registerGlobalHotkeys();
+	}
+
 
 	async loadSettings() {
 		const data = await this.loadData();
@@ -1355,546 +1370,313 @@ export default class OhUtilsPlugin extends Plugin {
 	}
 }
 
-type SettingsTab = 'general' | 'note' | 'tab' | 'fileExplorer' | 'globalHotkeys';
+// ── 설정 탭 (Obsidian 1.13+ 선언적 설정 API) ──────────────────
+// display() 기반 커스텀 UI는 1.13 코어 설정 검색과 중복되어 완전 이관했다 (v0.0.73).
+// minAppVersion를 1.13.0으로 올렸으므로 구버전 폴백 display()는 유지하지 않는다.
 
 class OhUtilsSettingTab extends PluginSettingTab {
 	plugin: OhUtilsPlugin;
-	private activeTab: SettingsTab = 'general';
-	private searchQuery = '';
 
 	constructor(app: App, plugin: OhUtilsPlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
 	}
 
-	display(): void {
-		const { containerEl } = this;
-		containerEl.empty();
-
-		// ── 검색창 ────────────────────────────────────────────
-		if (this.plugin.settings.settingsSearchEnabled) {
-			const searchInput = containerEl.createEl('input', {
-				type: 'search',
-				placeholder: '설정 검색…',
-				cls: 'oh-aio-search-input',
-				attr: { 'aria-label': '설정 검색' },
-			}) as HTMLInputElement;
-			searchInput.value = this.searchQuery;
-
-			const contentEl = containerEl.createDiv();
-			const updateContent = () => {
-				contentEl.empty();
-				if (this.searchQuery) {
-					this.renderSearchResults(contentEl, this.searchQuery.toLowerCase());
-				} else {
-					this.renderTabsContent(contentEl);
-				}
-			};
-
-			// IME 조합 중에는 갱신을 건너뜀 — 한글 자모 깨짐 방지
-			let isComposing = false;
-			searchInput.addEventListener('compositionstart', () => { isComposing = true; });
-			searchInput.addEventListener('compositionend', () => {
-				isComposing = false;
-				this.searchQuery = searchInput.value.trim();
-				updateContent();
-			});
-			searchInput.addEventListener('input', () => {
-				if (isComposing) return;
-				this.searchQuery = searchInput.value.trim();
-				updateContent();
-			});
-
-			updateContent();
-			return;
-		}
-
-		this.renderTabsContent(containerEl);
-	}
-
-	private get tabDefinitions(): { id: SettingsTab; label: string; render: (el: HTMLElement) => void }[] {
+	getSettingDefinitions(): SettingDefinitionItem[] {
+		const { settings } = this.plugin;
 		return [
-			{ id: 'general',       label: '일반',       render: el => this.renderGeneral(el) },
-			{ id: 'note',          label: '노트',        render: el => this.renderNote(el) },
-			{ id: 'tab',           label: '탭',          render: el => this.renderTabSection(el) },
-			{ id: 'fileExplorer',  label: '파일 탐색기', render: el => this.renderFileExplorer(el) },
-			{ id: 'globalHotkeys', label: '글로벌 핫키', render: el => this.renderGlobalHotkeys(el) },
+			{
+				type: 'page',
+				name: '일반',
+				items: [
+					{
+						type: 'group',
+						heading: '창 최소화',
+						visible: () => Platform.isDesktop,
+						items: [
+							{
+								name: '아무것도 활성화되지 않았을 때 Esc로 최소화',
+								desc: '모달·메뉴·제안 목록이 열려 있지 않고 에디터에 포커스가 없는 상태에서 Esc 키를 누르면 창을 최소화합니다.',
+								control: { type: 'toggle', key: 'minimizeOnEscapeEnabled' },
+							},
+							{
+								name: '최소화에 필요한 Esc 입력 횟수',
+								desc: `${ESCAPE_PRESS_WINDOW_MS}ms 안에 Esc 키를 몇 번 연속으로 눌러야 창을 최소화할지 지정합니다.`,
+								control: { type: 'number', key: 'minimizeOnEscapePressCount', min: 1, max: 10 },
+							},
+						],
+					},
+					{
+						type: 'group',
+						heading: '디버그',
+						items: [
+							{
+								name: '디버그 모드',
+								desc: '각 기능의 동작을 브라우저 콘솔(Ctrl+Shift+I)에 verbose하게 출력합니다.',
+								control: { type: 'toggle', key: 'debugMode' },
+							},
+						],
+					},
+				],
+			},
+			{
+				type: 'page',
+				name: '노트',
+				items: [
+					{
+						type: 'group',
+						heading: '빈 새 노트 자동 삭제',
+						items: [
+							{
+								name: '활성화',
+								desc: '새로 만든 노트에 아무것도 입력하지 않고 다른 곳으로 이동하면 노트를 자동으로 삭제합니다. 삭제 직후 알림에서 되돌리기 할 수 있습니다.',
+								control: { type: 'toggle', key: 'deleteEmptyNewNoteEnabled' },
+							},
+						],
+					},
+					{
+						type: 'group',
+						heading: '홈 노트',
+						items: [
+							{
+								name: '활성화',
+								desc: '모든 탭을 닫으면 지정한 노트를 자동으로 엽니다.',
+								control: { type: 'toggle', key: 'homeNoteEnabled' },
+							},
+							{
+								name: '노트 경로',
+								desc: 'Vault 루트 기준 경로. 예: Home.md, Daily/Home.md',
+								control: { type: 'text', key: 'homeNotePath', placeholder: 'Home.md' },
+							},
+						],
+					},
+				],
+			},
+			{
+				type: 'page',
+				name: '탭',
+				items: [
+					{
+						type: 'group',
+						heading: '탭 동작',
+						items: [
+							{
+								name: '중복 탭 방지',
+								desc: '이미 열려 있는 파일을 다시 열면 새 탭을 만들지 않고 기존 탭으로 이동합니다.',
+								control: { type: 'toggle', key: 'noDuplicateTabsEnabled' },
+							},
+							{
+								name: '모바일: 새 탭으로 열기',
+								desc: '모바일에서 파일을 열 때 현재 탭을 대체하지 않고 새 탭으로 엽니다.',
+								control: { type: 'toggle', key: 'mobileOpenInNewTabEnabled' },
+							},
+							{
+								name: 'PC: 새 탭으로 열기',
+								desc: 'PC에서 파일을 열 때 현재 탭을 대체하지 않고 새 탭으로 엽니다.',
+								control: { type: 'toggle', key: 'desktopOpenInNewTabEnabled' },
+							},
+						],
+					},
+					{
+						type: 'group',
+						heading: '탭 목록',
+						items: [
+							{
+								name: '활성화',
+								desc: '뷰 헤더에 탭 목록 버튼을 추가합니다. 탭 전환, 핀 고정, 닫기, 드래그 순서 변경을 지원합니다.',
+								control: { type: 'toggle', key: 'tabListEnabled' },
+							},
+						],
+					},
+				],
+			},
+			{
+				type: 'page',
+				name: '파일 탐색기',
+				items: [
+					{
+						type: 'group',
+						heading: '핀 고정',
+						items: [
+							{
+								name: '활성화',
+								desc: '파일/폴더를 우클릭(모바일: 길게 누르기)하여 핀 고정하면 해당 폴더 최상단에 노출됩니다.',
+								control: { type: 'toggle', key: 'pinEnabled' },
+							},
+							{
+								name: '핀 고정 패턴',
+								desc: '.gitignore 형식. 한 줄에 하나씩. 예: Daily/, *.canvas, Projects/Important.md',
+								control: { type: 'textarea', key: 'pinnedPatterns', placeholder: 'Daily/\nProjects/\n*.canvas', rows: 6 },
+							},
+						],
+					},
+					{
+						type: 'group',
+						heading: '파일 숨기기',
+						items: [
+							{
+								name: '활성화',
+								desc: '패턴에 매칭되는 파일/폴더를 파일 탐색기에서 숨깁니다.',
+								control: { type: 'toggle', key: 'hideEnabled' },
+							},
+							{
+								name: '숨길 패턴',
+								desc: '.gitignore 형식. 한 줄에 하나씩. 예: *.excalidraw.md, _templates/',
+								control: { type: 'textarea', key: 'hidePatterns', placeholder: '*.excalidraw.md\n_templates/\n.trash/', rows: 6 },
+							},
+						],
+					},
+					{
+						type: 'group',
+						heading: '하위 폴더 일괄 접기',
+						items: [
+							{
+								name: '활성화',
+								desc: Platform.isMobile
+									? '폴더를 길게 눌러 나오는 메뉴에서 "하위 폴더 전부 닫기"를 선택합니다.'
+									: 'Opt(⌥, Mac) / Alt(Windows)를 누른 채 폴더를 클릭합니다.',
+								control: { type: 'toggle', key: 'collapseChildrenEnabled' },
+							},
+						],
+					},
+					{
+						type: 'group',
+						heading: '폴더 액션 버튼',
+						items: [
+							{
+								name: '활성화',
+								desc: '파일/폴더에 마우스를 올리면 빠른 액션 버튼이 나타납니다.',
+								control: { type: 'toggle', key: 'folderActionsEnabled' },
+							},
+							{
+								name: '새 파일',
+								desc: '폴더 안에 새 파일을 만듭니다. (폴더 전용)',
+								visible: () => settings.folderActionsEnabled,
+								control: { type: 'toggle', key: 'folderActionsShowNewFile' },
+							},
+							{
+								name: '모두 펼치기',
+								desc: '하위 폴더를 전부 펼칩니다. (폴더 전용)',
+								visible: () => settings.folderActionsEnabled,
+								control: { type: 'toggle', key: 'folderActionsShowExpandAll' },
+							},
+							{
+								name: '모두 닫기',
+								desc: '하위 폴더를 전부 접습니다. (폴더 전용)',
+								visible: () => settings.folderActionsEnabled,
+								control: { type: 'toggle', key: 'folderActionsShowCollapseAll' },
+							},
+							{
+								name: '핀 고정/해제',
+								desc: '파일과 폴더 모두에 표시됩니다. 핀 고정 기능이 꺼져 있으면 동작하지 않습니다.',
+								visible: () => settings.folderActionsEnabled,
+								control: { type: 'toggle', key: 'folderActionsShowPin' },
+							},
+							{
+								name: '삭제',
+								desc: '파일과 폴더 모두에 표시됩니다. 클릭 시 확인 후 휴지통으로 이동합니다.',
+								visible: () => settings.folderActionsEnabled,
+								control: { type: 'toggle', key: 'folderActionsShowDelete' },
+							},
+							{
+								name: '경로 복사',
+								desc: '파일과 폴더 모두에 표시됩니다. vault 기준 상대 경로를 클립보드에 복사합니다.',
+								visible: () => settings.folderActionsEnabled,
+								control: { type: 'toggle', key: 'folderActionsShowCopyPath' },
+							},
+						],
+					},
+				],
+			},
+			{
+				type: 'page',
+				name: '글로벌 핫키',
+				visible: () => Platform.isDesktop,
+				items: [
+					{
+						name: '활성화',
+						desc: 'Obsidian이 백그라운드에 있어도 단축키로 명령어를 실행합니다.',
+						control: { type: 'toggle', key: 'globalHotkeysEnabled' },
+					},
+					{
+						type: 'list',
+						name: '등록된 단축키',
+						emptyState: '등록된 단축키가 없습니다.',
+						items: this.plugin.settings.globalHotkeys.map(hotkey => ({
+							name: displayAccelerator(hotkey.accelerator),
+							desc: hotkey.commandName,
+						})),
+						onDelete: async (index: number) => {
+							await this.plugin.changeGlobalHotkeys(hotkeys => hotkeys.splice(index, 1));
+							this.update();
+						},
+						addItem: {
+							name: '단축키 추가',
+							action: () => {
+								new GlobalHotkeyModal(this.app, async (accelerator, commandId, commandName) => {
+									await this.plugin.changeGlobalHotkeys(hotkeys => hotkeys.push({
+										accelerator,
+										commandId,
+										commandName,
+									}));
+									this.update();
+								}).open();
+							},
+						},
+					},
+				],
+			},
 		];
 	}
 
-	private renderTabsContent(containerEl: HTMLElement): void {
-		const tabBar = containerEl.createDiv({ cls: 'oh-aio-tab-bar' });
-		for (const tab of this.tabDefinitions) {
-			const btn = tabBar.createEl('button', {
-				text: tab.label,
-				cls: 'oh-aio-tab-btn' + (this.activeTab === tab.id ? ' is-active' : ''),
-			});
-			btn.addEventListener('click', () => {
-				this.activeTab = tab.id;
-				this.display();
-			});
-		}
-		this.tabDefinitions.find(t => t.id === this.activeTab)?.render(containerEl);
+	// 값 저장은 super.setControlValue(plugin.settings 반영 + 저장)가 담당한다.
+	// 여기선 기능별 화면/필터 갱신 같은 부수 효과만 실행한다.
+	setControlValue(key: string, value: unknown): void | Promise<void> {
+		super.setControlValue(key, value);
+		this.applySettingSideEffects(key);
 	}
 
-	private renderSearchResults(containerEl: HTMLElement, query: string): void {
-		const tempEl = createDiv();
-		for (const tab of this.tabDefinitions) {
-			tab.render(tempEl);
-		}
-
-		let currentHeadingEl: HTMLElement | null = null;
-		let lastAppendedHeadingEl: HTMLElement | null = null;
-		let matchCount = 0;
-
-		for (const item of Array.from(tempEl.querySelectorAll<HTMLElement>('.setting-item'))) {
-			if (item.classList.contains('setting-item-heading')) {
-				currentHeadingEl = item;
-				continue;
-			}
-			const nameText = item.querySelector('.setting-item-name')?.textContent?.toLowerCase() ?? '';
-			const descText = item.querySelector('.setting-item-description')?.textContent?.toLowerCase() ?? '';
-			if (!nameText.includes(query) && !descText.includes(query)) continue;
-
-			// 이 섹션의 헤딩이 아직 출력되지 않았으면 먼저 표시
-			if (currentHeadingEl && currentHeadingEl !== lastAppendedHeadingEl) {
-				containerEl.appendChild(currentHeadingEl.cloneNode(true));
-				lastAppendedHeadingEl = currentHeadingEl;
-			}
-			containerEl.appendChild(item);
-			matchCount++;
-		}
-
-		if (matchCount === 0) {
-			containerEl.createEl('p', {
-				text: `"${this.searchQuery}"에 해당하는 설정이 없습니다.`,
-				cls: 'oh-aio-search-empty',
-			});
-		}
-	}
-
-	private renderGeneral(containerEl: HTMLElement): void {
-		// ── 설정 탭 ──────────────────────────────────────────
-		new Setting(containerEl).setName('설정 탭').setHeading();
-		new Setting(containerEl)
-			.setName('설정 검색')
-			.setDesc('설정 탭 상단에 검색창을 표시합니다. 모든 탭의 설정 항목을 한 번에 검색할 수 있습니다.')
-			.addToggle(toggle =>
-				toggle
-					.setValue(this.plugin.settings.settingsSearchEnabled)
-					.onChange(async (value) => {
-						this.plugin.settings.settingsSearchEnabled = value;
-						await this.plugin.saveSettings();
-						this.searchQuery = '';
-						this.display();
-					})
-			);
-
-		// ── 창 최소화 ────────────────────────────────────────
-		new Setting(containerEl).setName('창 최소화').setHeading();
-		if (Platform.isDesktop) {
-			new Setting(containerEl)
-				.setName('아무것도 활성화되지 않았을 때 Esc로 최소화')
-				.setDesc('모달·메뉴·제안 목록이 열려 있지 않고 에디터에 포커스가 없는 상태에서 Esc 키를 누르면 창을 최소화합니다.')
-				.addToggle(toggle =>
-					toggle
-						.setValue(this.plugin.settings.minimizeOnEscapeEnabled)
-						.onChange(async (value) => {
-							this.plugin.settings.minimizeOnEscapeEnabled = value;
-							await this.plugin.saveSettings();
-						})
-				);
-			new Setting(containerEl)
-				.setName('최소화에 필요한 Esc 입력 횟수')
-				.setDesc(`${ESCAPE_PRESS_WINDOW_MS}ms 안에 Esc 키를 몇 번 연속으로 눌러야 창을 최소화할지 지정합니다.`)
-				.addDropdown(dropdown =>
-					dropdown
-						.addOptions(Object.fromEntries(
-							Array.from({ length: 10 }, (_, optionIndex) => [String(optionIndex + 1), String(optionIndex + 1)])
-						))
-						.setValue(String(this.plugin.settings.minimizeOnEscapePressCount))
-						.onChange(async (value) => {
-							this.plugin.settings.minimizeOnEscapePressCount = Number(value);
-							await this.plugin.saveSettings();
-						})
-				);
-		} else {
-			containerEl.createEl('p', {
-				text: '창 최소화는 데스크탑에서만 사용 가능합니다.',
-				cls: 'oh-aio-notice-text',
-			});
-		}
-
-		// ── 디버그 ───────────────────────────────────────────
-		new Setting(containerEl).setName('디버그').setHeading();
-		new Setting(containerEl)
-			.setName('디버그 모드')
-			.setDesc('각 기능의 동작을 브라우저 콘솔(Ctrl+Shift+I)에 verbose하게 출력합니다.')
-			.addToggle(toggle =>
-				toggle
-					.setValue(this.plugin.settings.debugMode)
-					.onChange(async (value) => {
-						this.plugin.settings.debugMode = value;
-						await this.plugin.saveSettings();
-						if (value) console.log('[oh-utils] debug mode enabled');
-					})
-			);
-	}
-
-	private renderNote(containerEl: HTMLElement): void {
-		// ── 빈 새 노트 자동 삭제 ─────────────────────────────
-		new Setting(containerEl).setName('빈 새 노트 자동 삭제').setHeading();
-		new Setting(containerEl)
-			.setName('활성화')
-			.setDesc('새로 만든 노트에 아무것도 입력하지 않고 다른 곳으로 이동하면 노트를 자동으로 삭제합니다. 삭제 직후 알림에서 되돌리기 할 수 있습니다.')
-			.addToggle(toggle =>
-				toggle
-					.setValue(this.plugin.settings.deleteEmptyNewNoteEnabled)
-					.onChange(async (value) => {
-						this.plugin.settings.deleteEmptyNewNoteEnabled = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		// ── 홈 노트 ──────────────────────────────────────────
-		new Setting(containerEl).setName('홈 노트').setHeading();
-		new Setting(containerEl)
-			.setName('활성화')
-			.setDesc('모든 탭을 닫으면 지정한 노트를 자동으로 엽니다.')
-			.addToggle(toggle =>
-				toggle
-					.setValue(this.plugin.settings.homeNoteEnabled)
-					.onChange(async (value) => {
-						this.plugin.settings.homeNoteEnabled = value;
-						await this.plugin.saveSettings();
-					})
-			);
-		new Setting(containerEl)
-			.setName('노트 경로')
-			.setDesc('Vault 루트 기준 경로. 예: Home.md, Daily/Home.md')
-			.addText(text =>
-				text
-					.setPlaceholder('Home.md')
-					.setValue(this.plugin.settings.homeNotePath)
-					.onChange(async (value) => {
-						this.plugin.settings.homeNotePath = value.trim();
-						await this.plugin.saveSettings();
-					})
-			);
-	}
-
-	// QUIRK(obsidian-settingtab-rendertab): Obsidian 코어가 설정 탭을 열 때 display() 대신
-	//   SettingTab의 renderTab() 라이프사이클 훅을 호출한다. 섹션 렌더러 이름이 renderTab이면
-	//   이 훅을 덮어써서 인자 없이 호출되던 부분이 크래시 나 설정창이 백지가 되므로 이름을 피한다.
-	// QUIRK-REMOVE-WHEN: 해당 없음 (코어 API 명세 일부로 굳어진 이름 — 유지)
-	private renderTabSection(containerEl: HTMLElement): void {
-		// ── 탭 동작 ──────────────────────────────────────────
-		new Setting(containerEl).setName('탭 동작').setHeading();
-		new Setting(containerEl)
-			.setName('중복 탭 방지')
-			.setDesc('이미 열려 있는 파일을 다시 열면 새 탭을 만들지 않고 기존 탭으로 이동합니다.')
-			.addToggle(toggle =>
-				toggle
-					.setValue(this.plugin.settings.noDuplicateTabsEnabled)
-					.onChange(async (value) => {
-						this.plugin.settings.noDuplicateTabsEnabled = value;
-						await this.plugin.saveSettings();
-					})
-			);
-		new Setting(containerEl)
-			.setName('모바일: 새 탭으로 열기')
-			.setDesc('모바일에서 파일을 열 때 현재 탭을 대체하지 않고 새 탭으로 엽니다.')
-			.addToggle(toggle =>
-				toggle
-					.setValue(this.plugin.settings.mobileOpenInNewTabEnabled)
-					.onChange(async (value) => {
-						this.plugin.settings.mobileOpenInNewTabEnabled = value;
-						await this.plugin.saveSettings();
-					})
-			);
-		new Setting(containerEl)
-			.setName('PC: 새 탭으로 열기')
-			.setDesc('PC에서 파일을 열 때 현재 탭을 대체하지 않고 새 탭으로 엽니다.')
-			.addToggle(toggle =>
-				toggle
-					.setValue(this.plugin.settings.desktopOpenInNewTabEnabled)
-					.onChange(async (value) => {
-						this.plugin.settings.desktopOpenInNewTabEnabled = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		// ── 탭 목록 ─────────────────────────────────────────
-		new Setting(containerEl).setName('탭 목록').setHeading();
-		new Setting(containerEl)
-			.setName('활성화')
-			.setDesc('뷰 헤더에 탭 목록 버튼을 추가합니다. 탭 전환, 핀 고정, 드래그로 순서 변경을 지원하며 터치 기기에서는 스와이프로 탭을 닫을 수 있습니다.')
-			.addToggle(toggle =>
-				toggle
-					.setValue(this.plugin.settings.tabListEnabled)
-					.onChange(async (value) => {
-						this.plugin.settings.tabListEnabled = value;
-						await this.plugin.saveSettings();
-						if (value) this.plugin.refreshTabList();
-						else this.plugin.teardownTabList();
-					})
-			);
-	}
-
-	private renderGlobalHotkeys(containerEl: HTMLElement): void {
-		// ── 글로벌 핫키 ──────────────────────────────────────
-		new Setting(containerEl).setName('글로벌 핫키').setHeading();
-
-		if (!Platform.isDesktop) {
-			containerEl.createEl('p', {
-				text: '글로벌 핫키는 데스크탑에서만 사용 가능합니다.',
-				cls: 'oh-aio-notice-text',
-			});
-			return;
-		}
-
-		new Setting(containerEl)
-			.setName('활성화')
-			.setDesc('Obsidian이 백그라운드에 있어도 단축키로 명령어를 실행합니다.')
-			.addToggle(toggle =>
-				toggle
-					.setValue(this.plugin.settings.globalHotkeysEnabled)
-					.onChange(async (value) => {
-						this.plugin.settings.globalHotkeysEnabled = value;
-						await this.plugin.saveSettings();
-						this.plugin.unregisterGlobalHotkeys();
-						if (value) this.plugin.registerGlobalHotkeys();
-					})
-			);
-
-		const { globalHotkeys } = this.plugin.settings;
-		if (globalHotkeys.length > 0) {
-			const listEl = containerEl.createDiv({ cls: 'oh-aio-hotkey-list' });
-			for (const hotkey of globalHotkeys) {
-				const rowEl = listEl.createDiv({ cls: 'oh-aio-hotkey-row' });
-				rowEl.createEl('kbd', {
-					text: displayAccelerator(hotkey.accelerator),
-					cls: 'oh-aio-key-badge',
-				});
-				rowEl.createSpan({ text: hotkey.commandName, cls: 'oh-aio-hotkey-command' });
-				const delBtn = rowEl.createEl('button', { text: '삭제', cls: 'oh-aio-hotkey-delete' });
-				delBtn.addEventListener('click', async () => {
-					this.plugin.unregisterGlobalHotkeys();
-					this.plugin.settings.globalHotkeys = globalHotkeys.filter(h => h.id !== hotkey.id);
-					await this.plugin.saveSettings();
-					this.plugin.registerGlobalHotkeys();
-					this.display();
-				});
-			}
-		}
-
-		new Setting(containerEl)
-			.addButton(btn =>
-				btn
-					.setButtonText('+ 단축키 추가')
-					.setCta()
-					.onClick(() => {
-						new GlobalHotkeyModal(this.plugin.app, async (accelerator, commandId, commandName) => {
-							this.plugin.unregisterGlobalHotkeys();
-							this.plugin.settings.globalHotkeys.push({
-								id: Date.now().toString(36),
-								accelerator,
-								commandId,
-								commandName,
-							});
-							await this.plugin.saveSettings();
-							this.plugin.registerGlobalHotkeys();
-							this.display();
-						}).open();
-					})
-			);
-	}
-
-	private renderFileExplorer(containerEl: HTMLElement): void {
-		// ── 핀 고정 ──────────────────────────────────────────
-		new Setting(containerEl).setName('핀 고정').setHeading();
-		new Setting(containerEl)
-			.setName('활성화')
-			.setDesc('파일/폴더를 우클릭(모바일: 길게 누르기)하여 핀 고정하면 해당 폴더 최상단에 노출됩니다.')
-			.addToggle(toggle =>
-				toggle
-					.setValue(this.plugin.settings.pinEnabled)
-					.onChange(async (value) => {
-						this.plugin.settings.pinEnabled = value;
-						await this.plugin.saveSettings();
-						this.plugin.requestSort();
-						if (!value) this.plugin.clearPinDecorations();
-						else this.plugin.applyPinIcons();
-					})
-			);
-		new Setting(containerEl)
-			.setName('핀 고정 패턴')
-			.setDesc('.gitignore 형식. 한 줄에 하나씩. 예: Daily/, *.canvas, Projects/Important.md')
-			.addTextArea(text => {
-				text
-					.setPlaceholder('Daily/\nProjects/\n*.canvas')
-					.setValue(this.plugin.settings.pinnedPatterns)
-					.onChange(async (value) => {
-						this.plugin.settings.pinnedPatterns = value;
-						await this.plugin.saveSettings();
-						this.plugin.rebuildPinFilter();
-						this.plugin.clearPinDecorations();
-						this.plugin.applyPinIcons();
-						this.plugin.requestSort();
-					});
-				text.inputEl.rows = 6;
-				text.inputEl.style.width = '100%';
-				text.inputEl.style.fontFamily = 'var(--font-monospace)';
-			});
-
-		// ── 파일 숨기기 ──────────────────────────────────────
-		new Setting(containerEl).setName('파일 숨기기').setHeading();
-		new Setting(containerEl)
-			.setName('활성화')
-			.setDesc('패턴에 매칭되는 파일/폴더를 파일 탐색기에서 숨깁니다.')
-			.addToggle(toggle =>
-				toggle
-					.setValue(this.plugin.settings.hideEnabled)
-					.onChange(async (value) => {
-						this.plugin.settings.hideEnabled = value;
-						await this.plugin.saveSettings();
-						this.plugin.requestSort();
-					})
-			);
-		new Setting(containerEl)
-			.setName('숨길 패턴')
-			.setDesc('.gitignore 형식. 한 줄에 하나씩. 예: *.excalidraw.md, _templates/')
-			.addTextArea(text => {
-				text
-					.setPlaceholder('*.excalidraw.md\n_templates/\n.trash/')
-					.setValue(this.plugin.settings.hidePatterns)
-					.onChange(async (value) => {
-						this.plugin.settings.hidePatterns = value;
-						await this.plugin.saveSettings();
-						this.plugin.rebuildHideFilter();
-						this.plugin.requestSort();
-					});
-				text.inputEl.rows = 6;
-				text.inputEl.style.width = '100%';
-				text.inputEl.style.fontFamily = 'var(--font-monospace)';
-			});
-
-		// ── 하위 폴더 일괄 접기 ──────────────────────────────
-		new Setting(containerEl).setName('하위 폴더 일괄 접기').setHeading();
-		const collapseDesc = Platform.isMobile
-			? '폴더를 길게 눌러 나오는 메뉴에서 "하위 폴더 전부 닫기"를 선택합니다.'
-			: 'Opt(⌥, Mac) / Alt(Windows)를 누른 채 폴더를 클릭합니다.';
-		new Setting(containerEl)
-			.setName('활성화')
-			.setDesc(collapseDesc)
-			.addToggle(toggle =>
-				toggle
-					.setValue(this.plugin.settings.collapseChildrenEnabled)
-					.onChange(async (value) => {
-						this.plugin.settings.collapseChildrenEnabled = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		// ── 폴더 액션 버튼 ───────────────────────────────────
-		new Setting(containerEl).setName('폴더 액션 버튼').setHeading();
-		new Setting(containerEl)
-			.setName('활성화')
-			.setDesc('파일/폴더에 마우스를 올리면 빠른 액션 버튼이 나타납니다.')
-			.addToggle(toggle =>
-				toggle
-					.setValue(this.plugin.settings.folderActionsEnabled)
-					.onChange(async (value) => {
-						this.plugin.settings.folderActionsEnabled = value;
-						await this.plugin.saveSettings();
-						if (value) this.plugin.applyFolderActionButtons();
-						else this.plugin.clearFolderActionButtons();
-						this.display();
-					})
-			);
-
-		if (this.plugin.settings.folderActionsEnabled) {
-			const subEl = containerEl.createDiv({ cls: 'oh-aio-sub-settings' });
-
-			new Setting(subEl)
-				.setName('새 파일')
-				.setDesc('폴더 안에 새 파일을 만듭니다. (폴더 전용)')
-				.addToggle(toggle =>
-					toggle
-						.setValue(this.plugin.settings.folderActionsShowNewFile)
-						.onChange(async (value) => {
-							this.plugin.settings.folderActionsShowNewFile = value;
-							await this.plugin.saveSettings();
-							this.plugin.refreshFolderActionButtons();
-						})
-				);
-
-			new Setting(subEl)
-				.setName('모두 펼치기')
-				.setDesc('하위 폴더를 전부 펼칩니다. (폴더 전용)')
-				.addToggle(toggle =>
-					toggle
-						.setValue(this.plugin.settings.folderActionsShowExpandAll)
-						.onChange(async (value) => {
-							this.plugin.settings.folderActionsShowExpandAll = value;
-							await this.plugin.saveSettings();
-							this.plugin.refreshFolderActionButtons();
-						})
-				);
-
-			new Setting(subEl)
-				.setName('모두 닫기')
-				.setDesc('하위 폴더를 전부 접습니다. (폴더 전용)')
-				.addToggle(toggle =>
-					toggle
-						.setValue(this.plugin.settings.folderActionsShowCollapseAll)
-						.onChange(async (value) => {
-							this.plugin.settings.folderActionsShowCollapseAll = value;
-							await this.plugin.saveSettings();
-							this.plugin.refreshFolderActionButtons();
-						})
-				);
-
-			new Setting(subEl)
-				.setName('핀 고정/해제')
-				.setDesc('파일과 폴더 모두에 표시됩니다. 핀 고정 기능이 꺼져 있으면 동작하지 않습니다.')
-				.addToggle(toggle =>
-					toggle
-						.setValue(this.plugin.settings.folderActionsShowPin)
-						.onChange(async (value) => {
-							this.plugin.settings.folderActionsShowPin = value;
-							await this.plugin.saveSettings();
-							this.plugin.refreshFolderActionButtons();
-						})
-				);
-
-			new Setting(subEl)
-				.setName('삭제')
-				.setDesc('파일과 폴더 모두에 표시됩니다. 클릭 시 확인 후 휴지통으로 이동합니다.')
-				.addToggle(toggle =>
-					toggle
-						.setValue(this.plugin.settings.folderActionsShowDelete)
-						.onChange(async (value) => {
-							this.plugin.settings.folderActionsShowDelete = value;
-							await this.plugin.saveSettings();
-							this.plugin.refreshFolderActionButtons();
-						})
-				);
-			new Setting(subEl)
-				.setName('경로 복사')
-				.setDesc('파일과 폴더 모두에 표시됩니다. vault 기준 상대 경로를 클립보드에 복사합니다.')
-				.addToggle(toggle =>
-					toggle
-						.setValue(this.plugin.settings.folderActionsShowCopyPath)
-						.onChange(async (value) => {
-							this.plugin.settings.folderActionsShowCopyPath = value;
-							await this.plugin.saveSettings();
-							this.plugin.refreshFolderActionButtons();
-						})
-				);
+	private applySettingSideEffects(settingKey: string): void {
+		switch (settingKey) {
+			case 'tabListEnabled':
+				if (this.plugin.settings.tabListEnabled) this.plugin.refreshTabList();
+				else this.plugin.teardownTabList();
+				break;
+			case 'globalHotkeysEnabled':
+				this.plugin.unregisterGlobalHotkeys();
+				if (this.plugin.settings.globalHotkeysEnabled) this.plugin.registerGlobalHotkeys();
+				break;
+			case 'pinEnabled':
+				this.plugin.requestSort();
+				if (this.plugin.settings.pinEnabled) this.plugin.applyPinIcons();
+				else this.plugin.clearPinDecorations();
+				break;
+			case 'pinnedPatterns':
+				this.plugin.rebuildPinFilter();
+				this.plugin.clearPinDecorations();
+				this.plugin.applyPinIcons();
+				this.plugin.requestSort();
+				break;
+			case 'hideEnabled':
+			case 'hidePatterns':
+				this.plugin.rebuildHideFilter();
+				this.plugin.requestSort();
+				break;
+			case 'folderActionsEnabled':
+				if (this.plugin.settings.folderActionsEnabled) this.plugin.applyFolderActionButtons();
+				else this.plugin.clearFolderActionButtons();
+				this.refreshDomState(); // 서브 토글 visible 재평가 (구조 변화 없음 — 재렌더링 불필요)
+				break;
+			case 'folderActionsShowNewFile':
+			case 'folderActionsShowExpandAll':
+			case 'folderActionsShowCollapseAll':
+			case 'folderActionsShowPin':
+			case 'folderActionsShowDelete':
+			case 'folderActionsShowCopyPath':
+				this.plugin.refreshFolderActionButtons();
+				break;
 		}
 	}
-
 }
 
 // ── 글로벌 핫키 헬퍼 ─────────────────────────────────────────────

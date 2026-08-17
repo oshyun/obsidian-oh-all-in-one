@@ -60,7 +60,9 @@ ln -s "$REPO_PATH/tsconfig.json" ../<repo>-wt-<topic>/tsconfig.json
 
 ## 기능별 구현 메모
 
-설정 탭은 `setHeading()`으로 섹션을 구분한다. **1기능 = 1섹션** 규칙.
+설정 탭은 Obsidian 1.13+ **선언적 설정 API**로 구성한다 (minAppVersion 1.13.0).
+`getSettingDefinitions()`가 page(기능 영역)·group(섹션)·control을 반환하며, **1기능 = 1그룹** 규칙.
+값 변경의 부수 효과(정렬·필터 갱신 등)는 `setControlValue()` 오버라이드의 `applySettingSideEffects()`에서만 처리한다.
 
 ### 빈 새 노트 자동 삭제 (Delete Empty New Note)
 

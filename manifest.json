@@ -1,8 +1,8 @@
 {
 	"id": "oh-all-in-one",
 	"name": "0h All In One",
-	"version": "0.0.72",
-	"minAppVersion": "0.15.0",
+	"version": "0.0.73",
+	"minAppVersion": "1.13.0",
 	"description": "Utility features for Obsidian by oshyun.",
 	"author": "oshyun",
 	"authorUrl": "https://github.com/oshyun/obsidian-oh-all-in-one",

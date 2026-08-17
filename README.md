@@ -2,6 +2,8 @@
 
 An Obsidian plugin that bundles small but useful quality-of-life features for daily note-taking.
 
+Requires Obsidian 1.13.0 or later (settings are built on the declarative settings API).
+
 ## Features
 
 ### Delete Empty New Note
