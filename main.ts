@@ -50,6 +50,7 @@ interface OhUtilsSettings {
 	desktopOpenInNewTabEnabled: boolean;
 	tabListEnabled: boolean;
 	minimizeOnEscapeEnabled: boolean;
+	minimizeOnEscapePressCount: number;
 	debugMode: boolean;
 }
 
@@ -77,8 +78,12 @@ const DEFAULT_SETTINGS: OhUtilsSettings = {
 	desktopOpenInNewTabEnabled: false,
 	tabListEnabled: true,
 	minimizeOnEscapeEnabled: true,
+	minimizeOnEscapePressCount: 3,
 	debugMode: false,
 };
+
+// Esc 연속 입력 판정 윈도우 (ms) — keydown 타임아웃과 설정 설명 문구가 함께 참조한다
+const ESCAPE_PRESS_WINDOW_MS = 400;
 
 export default class OhUtilsPlugin extends Plugin {
 	settings: OhUtilsSettings;
@@ -109,8 +114,9 @@ export default class OhUtilsPlugin extends Plugin {
 		if (!this.escapeIndicatorEl) {
 			this.escapeIndicatorEl = document.body.createDiv({ cls: 'oh-aio-escape-indicator' });
 		}
+		const requiredPressCount = this.settings.minimizeOnEscapePressCount;
 		const filled = '●'.repeat(count);
-		const empty = '○'.repeat(3 - count);
+		const empty = '○'.repeat(requiredPressCount - count);
 		this.escapeIndicatorEl.setText(`Esc ${filled}${empty}`);
 		this.escapeIndicatorEl.addClass('is-visible');
 	}
@@ -370,18 +376,19 @@ export default class OhUtilsPlugin extends Plugin {
 					return;
 				}
 
-				// 오버레이도 없고 에디터 포커스도 없으면 3연속 Esc에서만 최소화
+				// 오버레이도 없고 에디터 포커스도 없으면 설정 횟수만큼 연속 Esc 입력 시 최소화
+				const requiredPressCount = this.settings.minimizeOnEscapePressCount;
 				this.escapePressCount++;
 				if (this.escapePressTimer !== null) window.clearTimeout(this.escapePressTimer);
 				this.escapePressTimer = window.setTimeout(() => {
 					this.resetEscapePresses();
-				}, 400);
+				}, ESCAPE_PRESS_WINDOW_MS);
 
 				this.showEscapeIndicator(this.escapePressCount);
-				this.log('[minimize-on-escape] count', this.escapePressCount, '/ 3');
-				if (this.escapePressCount >= 3) {
+				this.log('[minimize-on-escape] count', this.escapePressCount, '/', requiredPressCount);
+				if (this.escapePressCount >= requiredPressCount) {
 					this.resetEscapePresses();
-					this.log('[minimize-on-escape] triggered (3x)');
+					this.log('[minimize-on-escape] triggered');
 					getElectronRemote()?.getCurrentWindow().minimize();
 				}
 			}, { capture: true });
@@ -1494,6 +1501,20 @@ class OhUtilsSettingTab extends PluginSettingTab {
 						.setValue(this.plugin.settings.minimizeOnEscapeEnabled)
 						.onChange(async (value) => {
 							this.plugin.settings.minimizeOnEscapeEnabled = value;
+							await this.plugin.saveSettings();
+						})
+				);
+			new Setting(containerEl)
+				.setName('최소화에 필요한 Esc 입력 횟수')
+				.setDesc(`${ESCAPE_PRESS_WINDOW_MS}ms 안에 Esc 키를 몇 번 연속으로 눌러야 창을 최소화할지 지정합니다.`)
+				.addDropdown(dropdown =>
+					dropdown
+						.addOptions(Object.fromEntries(
+							Array.from({ length: 10 }, (_, optionIndex) => [String(optionIndex + 1), String(optionIndex + 1)])
+						))
+						.setValue(String(this.plugin.settings.minimizeOnEscapePressCount))
+						.onChange(async (value) => {
+							this.plugin.settings.minimizeOnEscapePressCount = Number(value);
 							await this.plugin.saveSettings();
 						})
 				);
