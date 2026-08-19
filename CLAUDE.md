@@ -202,6 +202,7 @@ items = [...items.filter(isPinned), ...items.filter(i => !isPinned(i))];
 #### 단축키 녹화 모달 (`GlobalHotkeyModal`)
 
 1. **단축키 녹화**: 버튼 클릭 시 `is-recording` 상태로 전환 → `document.addEventListener('keydown', ...)` capture 단계에서 키 입력 감지 → `keyEventToAccelerator(e)` 호출.
+   - 녹음 리스너는 클래스 필드(`recordingKeyHandler`)로 관리하며 `onClose()`의 `detachRecordingKeyHandler()`로 제거한다 — 백드롭 클릭·취소 버튼 등 녹음 중 모달이 닫히는 경로에서 리스너가 살아남아 키보드 전체를 삼키는 것을 방지.
 2. **명령어 선택**: `CommandSuggest` (AbstractInputSuggest 확장) — 입력 쿼리로 `app.commands.commands` 필터링, 최대 20개 표시.
 3. **저장**: accelerator + commandId 모두 입력된 경우에만 저장 허용.
 
