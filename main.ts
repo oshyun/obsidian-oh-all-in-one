@@ -1305,6 +1305,11 @@ export default class OhUtilsPlugin extends Plugin {
 					this.log('[global-hotkey] command not found:', hotkey.commandId);
 					return;
 				}
+				// 글로벌 핫키는 모달 열림 상태와 무관하게 발생해서, 모달을 여는 명령(Omnisearch 등)을
+				// 반복 실행하면 모달이 계층으로 쌓인다. 실행 전 열려 있는 모달을 모두 닫아 항상 하나만 유지한다.
+				for (const modalCloseButton of Array.from(document.querySelectorAll('.modal-container .modal-close-button'))) {
+					(modalCloseButton as HTMLElement).click();
+				}
 				if (cmd.checkCallback) cmd.checkCallback(false);
 				else if (cmd.callback) cmd.callback();
 			};
