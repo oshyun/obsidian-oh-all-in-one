@@ -1774,6 +1774,9 @@ class GlobalHotkeyModal extends Modal {
 	private commandId = '';
 	private commandName = '';
 	private onSave: (accelerator: string, commandId: string, commandName: string) => void;
+	// 녹음 중 document에 capture로 붙는 키 리스너. 백드롭 클릭·취소 버튼 등
+	// 녹음 취소와 무관하게 모달이 닫히는 경로가 있어 onClose에서 반드시 떼낸다.
+	private recordingKeyHandler: ((e: KeyboardEvent) => void) | null = null;
 
 	constructor(app: App, onSave: (accelerator: string, commandId: string, commandName: string) => void) {
 		super(app);
@@ -1808,7 +1811,7 @@ class GlobalHotkeyModal extends Modal {
 				if (e.key === 'Escape') {
 					recorderEl.removeClass('is-recording');
 					recorderEl.setText(this.accelerator ? displayAccelerator(this.accelerator) : '클릭하여 단축키 입력');
-					document.removeEventListener('keydown', keyHandler!, true);
+					this.detachRecordingKeyHandler();
 					return;
 				}
 
@@ -1818,8 +1821,9 @@ class GlobalHotkeyModal extends Modal {
 				this.accelerator = acc;
 				recorderEl.removeClass('is-recording');
 				recorderEl.setText(displayAccelerator(acc));
-				document.removeEventListener('keydown', keyHandler!, true);
+				this.detachRecordingKeyHandler();
 			};
+			this.recordingKeyHandler = keyHandler;
 
 			document.addEventListener('keydown', keyHandler, true);
 		});
@@ -1854,6 +1858,14 @@ class GlobalHotkeyModal extends Modal {
 	}
 
 	onClose() {
+		this.detachRecordingKeyHandler();
 		this.contentEl.empty();
+	}
+
+	private detachRecordingKeyHandler(): void {
+		if (this.recordingKeyHandler) {
+			document.removeEventListener('keydown', this.recordingKeyHandler, true);
+			this.recordingKeyHandler = null;
+		}
 	}
 }
