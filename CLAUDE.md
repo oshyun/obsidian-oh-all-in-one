@@ -196,7 +196,7 @@ items = [...items.filter(isPinned), ...items.filter(i => !isPinned(i))];
 - `registerGlobalHotkeys()`: 각 hotkey에 대해 `remote.globalShortcut.register(accelerator, callback)` 호출.
   - 콜백: 창이 숨겨져 있으면 `win.show()` + `win.focus()`, 이후 명령어 실행.
   - 명령어 실행: `cmd.checkCallback` 있으면 `cmd.checkCallback(false)`, 없으면 `cmd.callback()`.
-  - 실행 전 열려 있는 모달(`.modal-container .modal-close-button`)을 모두 닫는다 — 모달을 여는 명령(Omnisearch 등)의 반복 실행으로 모달이 계층으로 쌓이는 것을 방지.
+  - 모달이 열려 있으면 창 활성화만 하고 명령을 실행하지 않는다(`.modal-container` 존재 검사) — 글로벌 핫키는 OS 레벨에서 직접 실행되어 Obsidian 키맵(모달 스코프)을 우회하므로, 내장 핫키처럼 모달 열림 시 명령 재실행을 억제해 모달 중첩(Omnisearch 등)을 방지한다.
 - `unregisterGlobalHotkeys()`: 등록된 모든 핫키를 해제.
 
 #### 단축키 녹화 모달 (`GlobalHotkeyModal`)
