@@ -1305,10 +1305,14 @@ export default class OhUtilsPlugin extends Plugin {
 					this.log('[global-hotkey] command not found:', hotkey.commandId);
 					return;
 				}
-				// 글로벌 핫키는 모달 열림 상태와 무관하게 발생해서, 모달을 여는 명령(Omnisearch 등)을
-				// 반복 실행하면 모달이 계층으로 쌓인다. 실행 전 열려 있는 모달을 모두 닫아 항상 하나만 유지한다.
-				for (const modalCloseButton of Array.from(document.querySelectorAll('.modal-container .modal-close-button'))) {
-					(modalCloseButton as HTMLElement).click();
+				// 글로벌 핫키는 OS 레벨에서 직접 실행되어 Obsidian 키맵(모달 스코프)을 우회한다.
+				// 내장 핫키는 모달이 열려 있으면 키맵이 키를 선점해 명령이 재실행되지 않지만,
+				// 글로벌 핫키는 모달 열림과 무관하게 명령을 재실행해 모달이 중첩된다(Omnisearch 등
+				// 호출마다 새 모달을 여는 명령). 내장 핫키 동작과 일관되게 모달이 열려 있으면
+				// 창 활성화만 하고 명령은 실행하지 않는다.
+				if (document.querySelector('.modal-container')) {
+					this.log('[global-hotkey] modal open — command suppressed (built-in hotkey parity)');
+					return;
 				}
 				if (cmd.checkCallback) cmd.checkCallback(false);
 				else if (cmd.callback) cmd.callback();
